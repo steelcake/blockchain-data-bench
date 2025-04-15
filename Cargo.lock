@@ -1155,6 +1155,7 @@ dependencies = [
  "simd-json",
  "tikv-jemallocator",
  "tokio",
+ "zstd",
 ]
 
 [[package]]
