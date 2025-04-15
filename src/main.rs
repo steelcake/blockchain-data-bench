@@ -18,9 +18,44 @@ use tikv_jemallocator::Jemalloc;
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
+#[derive(Copy, Clone)]
+enum JsonCompression {
+    None,
+    Gzip,
+    Zstd(i32),
+}
+
 #[tokio::main]
 async fn main() {
-    // Get all transactions in a 100 block range
+    let transactions = fetch_transactions().await;
+
+    for _ in 0..4 {
+        // Benchmark JSON with different compression options
+        benchmark_json(&transactions, JsonCompression::None);  // No compression
+        benchmark_json(&transactions, JsonCompression::Gzip);  // GZIP compression
+        benchmark_json(&transactions, JsonCompression::Zstd(1));  // ZSTD level 1
+        benchmark_json(&transactions, JsonCompression::Zstd(3));  // ZSTD level 3
+        benchmark_json(&transactions, JsonCompression::Zstd(9));  // ZSTD level 9
+        println!("---");
+
+        // Benchmark Arrow IPC without compression
+        benchmark_arrow_ipc(&transactions, false);
+        // Benchmark Arrow IPC with ZSTD compression
+        benchmark_arrow_ipc(&transactions, true);
+        println!("---");
+
+        // Parquet with different compression levels
+        benchmark_parquet(&transactions, None);  // No compression
+        benchmark_parquet(&transactions, Some(1));  // Fastest compression
+        benchmark_parquet(&transactions, Some(3));  // Balanced compression
+        benchmark_parquet(&transactions, Some(9));  // Best compression
+
+
+        println!("\n====================================================\n");
+    }
+}
+
+async fn fetch_transactions() -> Vec<Transaction> {
     let query = ingest::Query::Evm(evm::Query {
         from_block: 20_123_123,
         to_block: Some(20_123_223),
@@ -36,8 +71,8 @@ async fn main() {
         ingest::ProviderConfig::new(ingest::ProviderKind::Hypersync),
         query,
     )
-    .await
-    .unwrap();
+        .await
+        .unwrap();
 
     let mut transactions = Vec::<Transaction>::new();
 
@@ -49,79 +84,122 @@ async fn main() {
         let tx_data = arrow_convert::deserialize::arrow_array_deserialize_iterator::<Transaction>(
             &struct_arr,
         )
-        .unwrap();
+            .unwrap();
         transactions.extend(tx_data);
     }
 
-    for _ in 0..4 {
-        // ARROW_IPC (Buffer compression: ZSTD)
-        let start = Instant::now();
-        let arrow_ipc = to_arrow_ipc(&transactions);
-        println!(
-            "took {}ms to serialize arrow_ipc",
-            start.elapsed().as_millis()
-        );
-
-        println!(
-            "arrow ipc serialized size: {}kB",
-            arrow_ipc.len() / (1 << 10)
-        );
-
-        let start = Instant::now();
-        let ipc_data = from_arrow_ipc(&arrow_ipc);
-        println!(
-            "took {}ms to deserialize arrow_ipc",
-            start.elapsed().as_millis()
-        );
-
-        assert_eq!(&transactions, &ipc_data);
-
-        // JSON (ETH-Hex, GZIP)
-        let start = Instant::now();
-        let json = to_json(&transactions);
-        println!("took {}ms to serialize json", start.elapsed().as_millis());
-
-        println!("json serialized size: {}kB", json.len() / (1 << 10));
-
-        let start = Instant::now();
-        let json_data = from_json(&json);
-        println!("took {}ms to deserialize json", start.elapsed().as_millis());
-
-        assert_eq!(&transactions, &json_data);
-
-        // Parquet (ZSTD)
-        let start = Instant::now();
-        let parquet = to_parquet(&transactions);
-        println!(
-            "took {}ms to serialize parquet ",
-            start.elapsed().as_millis()
-        );
-
-        println!("parquet serialized size: {}kB", parquet.len() / (1 << 10));
-
-        let start = Instant::now();
-        let parquet_data = from_parquet(parquet);
-        println!(
-            "took {}ms to deserialize parquet",
-            start.elapsed().as_millis()
-        );
-
-        assert_eq!(&transactions, &parquet_data);
-    }
+    transactions
 }
 
-fn to_parquet(data: &[Transaction]) -> Vec<u8> {
+fn benchmark_arrow_ipc(transactions: &[Transaction], use_compression: bool) {
+    let compression_label = if use_compression { ", ZSTD" } else { "" };
+
+    let start = Instant::now();
+    let arrow_ipc = to_arrow_ipc(&transactions, use_compression);
+
+    println!(
+        "[ARROW-IPC{}]",
+        compression_label,
+    );
+    println!(
+        "\tserialization:    {}ms",
+        start.elapsed().as_millis()
+    );
+    println!(
+        "\tserialized size:  {}kB",
+        arrow_ipc.len() / (1 << 10)
+    );
+
+    let start = Instant::now();
+    let ipc_data = from_arrow_ipc(&arrow_ipc);
+    println!(
+        "\tdeserialization:  {}ms",
+        start.elapsed().as_millis()
+    );
+
+    assert_eq!(&transactions, &ipc_data);
+}
+
+fn benchmark_parquet(transactions: &[Transaction], compression_level: Option<i32>) {
+    let compression_label = match compression_level {
+        Some(level) => format!(", ZSTD_{}", level),
+        None => "".to_string(),
+    };
+
+    let start = Instant::now();
+    let parquet = to_parquet(&transactions, compression_level);
+
+    println!(
+        "[PARQUET{}]",
+        compression_label,
+    );
+    println!(
+        "\tserialization:    {}ms",
+        start.elapsed().as_millis()
+    );
+    println!(
+        "\tserialized size:  {}kB",
+        parquet.len() / (1 << 10)
+    );
+
+    let start = Instant::now();
+    let parquet_data = from_parquet(parquet);
+
+    println!(
+        "\tdeserialization:  {}ms",
+        start.elapsed().as_millis()
+    );
+
+    assert_eq!(&transactions, &parquet_data);
+}
+
+fn benchmark_json(transactions: &[Transaction], compression: JsonCompression) {
+    let compression_label = match compression {
+        JsonCompression::None => "".to_string(),
+        JsonCompression::Gzip => ", GZIP".to_string(),
+        JsonCompression::Zstd(level) => format!(", ZSTD_{}", level),
+    };
+
+    let start = Instant::now();
+    let json_data = to_json(&transactions, compression);
+
+    println!(
+        "[JSON{}]",
+        compression_label,
+    );
+    println!(
+        "\tserialization:    {}ms",
+        start.elapsed().as_millis()
+    );
+    println!(
+        "\tserialized size:  {}kB",
+        json_data.len() / (1 << 10)
+    );
+
+    let start = Instant::now();
+    let deserialized = from_json(&json_data, compression);
+    println!(
+        "\tdeserialization:  {}ms",
+        start.elapsed().as_millis()
+    );
+
+    assert_eq!(&transactions, &deserialized);
+}
+
+fn to_parquet(data: &[Transaction], compression_level: Option<i32>) -> Vec<u8> {
     use parquet::arrow::arrow_writer::{ArrowWriter, ArrowWriterOptions};
     use parquet::file::properties::WriterProperties;
 
     let data: ArrayRef = data.try_into_arrow().unwrap();
     let batch = RecordBatch::from(data.as_any().downcast_ref::<StructArray>().unwrap());
 
-    let properties = WriterProperties::builder()
-        .set_compression(parquet::basic::Compression::ZSTD(
-            parquet::basic::ZstdLevel::try_new(3).unwrap(),
-        ))
-        .build();
+    let mut properties_builder = WriterProperties::builder();
+    if let Some(level) = compression_level {
+        properties_builder = properties_builder.set_compression(parquet::basic::Compression::ZSTD(
+            parquet::basic::ZstdLevel::try_new(level).unwrap(),
+        ));
+    }
+    let properties = properties_builder.build();
 
     let mut buf = Vec::new();
     let mut writer = ArrowWriter::try_new_with_options(
@@ -129,7 +207,7 @@ fn to_parquet(data: &[Transaction]) -> Vec<u8> {
         batch.schema(),
         ArrowWriterOptions::new().with_properties(properties),
     )
-    .unwrap();
+        .unwrap();
     writer.write(&batch).unwrap();
     writer.finish().unwrap();
 
@@ -155,31 +233,58 @@ fn from_parquet(data: Vec<u8>) -> Vec<Transaction> {
     array_ref.try_into_collection().unwrap()
 }
 
-fn to_json(data: &[Transaction]) -> Vec<u8> {
-    use flate2::Compression;
-    use flate2::write::GzEncoder;
-    use std::io::prelude::*;
-
+fn to_json(data: &[Transaction], compression: JsonCompression) -> Vec<u8> {
     let json_data = serde_json::to_vec(&data).unwrap();
 
-    let mut e = GzEncoder::new(Vec::new(), Compression::default());
-    e.write_all(&json_data).unwrap();
+    match compression {
+        JsonCompression::None => json_data,
+        JsonCompression::Gzip => {
+            use flate2::Compression;
+            use flate2::write::GzEncoder;
+            use std::io::prelude::*;
 
-    e.finish().unwrap()
+            let mut e = GzEncoder::new(Vec::new(), Compression::default());
+            e.write_all(&json_data).unwrap();
+            e.finish().unwrap()
+        }
+        JsonCompression::Zstd(level) => {
+            use zstd::stream::write::Encoder;
+            use std::io::prelude::*;
+
+            let mut e = Encoder::new(Vec::new(), level).unwrap();
+            e.write_all(&json_data).unwrap();
+            e.finish().unwrap()
+        }
+    }
 }
 
-fn from_json(data: &[u8]) -> Vec<Transaction> {
-    use flate2::read::GzDecoder;
-    use std::io::prelude::*;
+fn from_json(data: &[u8], compression: JsonCompression) -> Vec<Transaction> {
+    let decompressed = match compression {
+        JsonCompression::None => data.to_vec(),
+        JsonCompression::Gzip => {
+            use flate2::read::GzDecoder;
+            use std::io::prelude::*;
 
-    let mut d = GzDecoder::new(data);
-    let mut out = Vec::new();
-    d.read_to_end(&mut out).unwrap();
+            let mut d = GzDecoder::new(data);
+            let mut out = Vec::new();
+            d.read_to_end(&mut out).unwrap();
+            out
+        }
+        JsonCompression::Zstd(_) => {
+            use zstd::stream::read::Decoder;
+            use std::io::prelude::*;
 
-    simd_json::from_slice(&mut out).unwrap()
+            let mut d = Decoder::new(data).unwrap();
+            let mut out = Vec::new();
+            d.read_to_end(&mut out).unwrap();
+            out
+        }
+    };
+
+    simd_json::from_slice(&mut decompressed.clone()).unwrap()
 }
 
-fn to_arrow_ipc(data: &[Transaction]) -> Vec<u8> {
+fn to_arrow_ipc(data: &[Transaction], use_compression: bool) -> Vec<u8> {
     let batch = Transaction::to_arrow(data);
 
     let mut buf = Vec::new();
@@ -187,10 +292,14 @@ fn to_arrow_ipc(data: &[Transaction]) -> Vec<u8> {
         &mut buf,
         batch.schema_ref(),
         arrow::ipc::writer::IpcWriteOptions::default()
-            .try_with_compression(Some(arrow::ipc::CompressionType::ZSTD))
+            .try_with_compression(if use_compression {
+                Some(arrow::ipc::CompressionType::ZSTD)
+            } else {
+                None
+            })
             .unwrap(),
     )
-    .unwrap();
+        .unwrap();
     writer.write(&batch).unwrap();
     writer.finish().unwrap();
 
@@ -346,7 +455,7 @@ impl Transaction {
                 Arc::new(transaction_index.finish()),
             ],
         )
-        .unwrap()
+            .unwrap()
     }
 }
 
