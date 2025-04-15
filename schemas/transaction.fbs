@@ -1,0 +1,17 @@
+namespace Transaction;
+
+table TransactionData {
+  block_hash:[ubyte];
+  block_number:uint64;
+  from:[ubyte];
+  hash:[ubyte];
+  input:[ubyte];
+  to:[ubyte];
+  transaction_index:uint64;
+}
+
+table TransactionList {
+  transactions:[TransactionData];
+}
+
+root_type TransactionList;

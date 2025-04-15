@@ -9,7 +9,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 arrow = "54"
 arrow_convert = "0.8.1"
-cherry-core = { git = "https://github.com/steelcake/cherry-core" } 
+cherry-core = { git = "https://github.com/steelcake/cherry-core" }
 faster-hex = "0.10"
 futures-lite = "2"
 flate2 = "1"
@@ -20,3 +20,7 @@ parquet = "54"
 bytes = "1"
 itertools = "*"
 zstd = "0.13"
+flatbuffers = "25.2.10"
+
+[build-dependencies]
+which = "4.4"

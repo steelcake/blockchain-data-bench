@@ -1,15 +1,16 @@
-use arrow::array::{ArrayRef, BinaryArray, StructArray, UInt64Array, builder};
+use arrow::array::{builder, ArrayRef, BinaryArray, StructArray, UInt64Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use arrow_convert::{
-    ArrowDeserialize, ArrowField, ArrowSerialize, deserialize::TryIntoCollection,
-    serialize::TryIntoArrow,
+    deserialize::TryIntoCollection, serialize::TryIntoArrow, ArrowDeserialize, ArrowField,
+    ArrowSerialize,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 use std::time::Instant;
 
 use cherry_core::ingest;
+use flatbuffers::FlatBufferBuilder;
 use ingest::evm;
 
 use futures_lite::StreamExt;
@@ -17,6 +18,12 @@ use futures_lite::StreamExt;
 use tikv_jemallocator::Jemalloc;
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
+
+#[allow(dead_code, unused_imports)]
+#[path = "./transaction_generated.rs"]
+mod transaction_generated;
+use crate::transaction_generated::transaction::{root_as_transaction_list, TransactionData, TransactionList, TransactionListArgs, TransactionListBuilder};
+use transaction_generated::transaction::{TransactionDataArgs};
 
 #[derive(Copy, Clone)]
 enum JsonCompression {
@@ -49,7 +56,14 @@ async fn main() {
         benchmark_parquet(&transactions, Some(1));  // Fastest compression
         benchmark_parquet(&transactions, Some(3));  // Balanced compression
         benchmark_parquet(&transactions, Some(9));  // Best compression
+        println!("---");
 
+        // Benchmark FlatBuffers implementation
+        benchmark_flatbuffers(&transactions);
+        // Benchmark FlatBuffers implementation with ZSTD compression
+        benchmark_flatbuffers_compressed(&transactions, 1); // ZSTD level 1
+        benchmark_flatbuffers_compressed(&transactions, 3); // ZSTD level 3
+        benchmark_flatbuffers_compressed(&transactions, 9); // ZSTD level 9
 
         println!("\n====================================================\n");
     }
@@ -186,6 +200,55 @@ fn benchmark_json(transactions: &[Transaction], compression: JsonCompression) {
     assert_eq!(&transactions, &deserialized);
 }
 
+fn benchmark_flatbuffers(transactions: &[Transaction]) {
+    let start = Instant::now();
+    let flatbuffers_data = Transaction::to_flatbuffer(&transactions);
+
+    println!("[FLATBUFFERS]");
+    println!(
+        "\tserialization:    {}ms",
+        start.elapsed().as_millis()
+    );
+    println!(
+        "\tserialized size:  {}kB",
+        flatbuffers_data.len() / (1 << 10)
+    );
+
+    let start = Instant::now();
+    let deserialized = Transaction::from_flatbuffer(&flatbuffers_data);
+    println!(
+        "\tdeserialization:  {}ms",
+        start.elapsed().as_millis()
+    );
+
+    assert_eq!(&transactions, &deserialized);
+}
+
+fn benchmark_flatbuffers_compressed(transactions: &[Transaction], level: i32) {
+    let start = Instant::now();
+    let data = to_flatbuffers_compressed(&transactions, level);
+
+    println!("[FLATBUFFERS-CUSTOM, ZSTD_{}]", level);
+    println!(
+        "\tserialization:    {}ms",
+        start.elapsed().as_millis()
+    );
+    println!(
+        "\tserialized size:  {}kB",
+        data.len() / (1 << 10)
+    );
+
+    let start = Instant::now();
+    let deserialized = from_flatbuffers_compressed(&data);
+    println!(
+        "\tdeserialization:  {}ms",
+        start.elapsed().as_millis()
+    );
+
+    assert_eq!(&transactions, &deserialized);
+}
+
+
 fn to_parquet(data: &[Transaction], compression_level: Option<i32>) -> Vec<u8> {
     use parquet::arrow::arrow_writer::{ArrowWriter, ArrowWriterOptions};
     use parquet::file::properties::WriterProperties;
@@ -259,7 +322,7 @@ fn to_json(data: &[Transaction], compression: JsonCompression) -> Vec<u8> {
 }
 
 fn from_json(data: &[u8], compression: JsonCompression) -> Vec<Transaction> {
-    let decompressed = match compression {
+    let mut decompressed = match compression {
         JsonCompression::None => data.to_vec(),
         JsonCompression::Gzip => {
             use flate2::read::GzDecoder;
@@ -281,7 +344,7 @@ fn from_json(data: &[u8], compression: JsonCompression) -> Vec<Transaction> {
         }
     };
 
-    simd_json::from_slice(&mut decompressed.clone()).unwrap()
+    simd_json::from_slice(&mut decompressed).unwrap()
 }
 
 fn to_arrow_ipc(data: &[Transaction], use_compression: bool) -> Vec<u8> {
@@ -457,6 +520,62 @@ impl Transaction {
         )
             .unwrap()
     }
+
+    fn to_flatbuffer(data: &[Self]) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+
+        let tx_data = data.iter().map(|tx| {
+            let block_hash = tx.block_hash.as_ref().map(|x| builder.create_vector(x));
+            let from = tx.from.as_ref().map(|x| builder.create_vector(x));
+            let hash = tx.hash.as_ref().map(|x| builder.create_vector(x));
+            let input = tx.input.as_ref().map(|x| builder.create_vector(x));
+            let to = tx.to.as_ref().map(|x| builder.create_vector(x));
+
+            TransactionData::create(&mut builder, &TransactionDataArgs {
+                block_hash,
+                block_number: tx.block_number.unwrap_or_default(),
+                from,
+                hash,
+                input,
+                to,
+                transaction_index: tx.transaction_index.unwrap_or_default(),
+            })
+        }).collect::<Vec<_>>();
+
+        let tx_vector = builder.create_vector(&tx_data);
+
+        let root = TransactionList::create(
+            &mut builder,
+            &TransactionListArgs {
+                transactions: Some(tx_vector),
+            },
+        );
+
+
+        builder.finish(root, None);
+
+        builder.finished_data().to_vec()
+    }
+
+    fn from_flatbuffer(data: &[u8]) -> Vec<Self> {
+        let list = root_as_transaction_list(data).unwrap();
+
+        let mut out: Vec<Self> = Vec::with_capacity(list.transactions().iter().len());
+
+        for tx in list.transactions().unwrap().iter() {
+            out.push(Transaction {
+                block_hash: tx.block_hash().map(|x| x.bytes().to_vec()),
+                block_number: Some(tx.block_number()),
+                from: tx.from().map(|x| x.bytes().to_vec()),
+                hash: tx.hash().map(|x| x.bytes().to_vec()),
+                input: tx.input().map(|x| x.bytes().to_vec()),
+                to: tx.to().map(|x| x.bytes().to_vec()),
+                transaction_index: Some(tx.transaction_index()),
+            })
+        }
+
+        out
+    }
 }
 
 fn serialize_binary<S>(x: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error>
@@ -493,4 +612,28 @@ fn decode_hex(value: &str) -> Vec<u8> {
     faster_hex::hex_decode(hex.as_bytes(), &mut dst).unwrap();
 
     dst
+}
+
+// Compress FlatBuffers data with ZSTD
+fn to_flatbuffers_compressed(data: &[Transaction], level: i32) -> Vec<u8> {
+    use zstd::stream::write::Encoder;
+    use std::io::prelude::*;
+
+    let flatbuffers_data = Transaction::to_flatbuffer(data);
+
+    let mut encoder = Encoder::new(Vec::new(), level).unwrap();
+    encoder.write_all(&flatbuffers_data).unwrap();
+    encoder.finish().unwrap()
+}
+
+// Decompress and deserialize FlatBuffers data
+fn from_flatbuffers_compressed(data: &[u8]) -> Vec<Transaction> {
+    use zstd::stream::read::Decoder;
+    use std::io::prelude::*;
+
+    let mut decoder = Decoder::new(data).unwrap();
+    let mut decompressed = Vec::new();
+    decoder.read_to_end(&mut decompressed).unwrap();
+
+    Transaction::from_flatbuffer(&decompressed)
 }
