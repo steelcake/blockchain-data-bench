@@ -2,7 +2,7 @@ use arrow::array::{
     Array, ArrayRef, BinaryArray, BinaryDictionaryBuilder, DictionaryArray, PrimitiveRunBuilder,
     RunArray, StructArray, UInt64Array, builder,
 };
-use arrow::datatypes::{DataType, Field, Int32Type, Schema, UInt64Type};
+use arrow::datatypes::{DataType, Field, Int32Type, Schema, UInt32Type, UInt64Type};
 use arrow::record_batch::RecordBatch;
 use arrow_convert::{
     ArrowDeserialize, ArrowField, ArrowSerialize, deserialize::TryIntoCollection,
@@ -132,17 +132,11 @@ fn benchmark_arrow_ipc(
     //     .filter_map(|tx| tx.input.as_ref().map(|i| i.len()))
     //     .max()
     //     .unwrap_or(0);
+    let dict = zstd::dict::from_sample_iterator(transactions.iter().filter_map(|tx| tx.input.map(|i| i.as_slice())), 64 * (1 << 10))
     if light_compressed {
         for tx in transactions_input.iter_mut() {
             if let Some(input) = tx.input.as_ref() {
-                tx.input = Some(
-                    lz4::block::compress(
-                        &input,
-                        Some(lz4::block::CompressionMode::HIGHCOMPRESSION(9)),
-                        true,
-                    )
-                    .unwrap(),
-                );
+                tx.input = Some(lz4::block::compress(&input, Some(lz4::block::CompressionMode::HIGHCOMPRESSION(9)), true).unwrap());
                 // tx.input = Some(zstd::bulk::compress(&input, 8).unwrap());
             }
         }
@@ -361,7 +355,6 @@ fn to_arrow_ipc(data: &[Transaction], use_compression: bool, light_compressed: b
         arrow::ipc::writer::IpcWriteOptions::default()
             .try_with_compression(if use_compression {
                 Some(arrow::ipc::CompressionType::ZSTD)
-                // Some(arrow::ipc::CompressionType::LZ4_FRAME)
             } else {
                 None
             })

@@ -9,52 +9,76 @@ to see the results.
 Example result:
 
 ```
+====================================================
+
 [JSON]
-	serialization:    16ms
+	serialization:    12ms
 	serialized size:  17477kB
-	deserialization:  24ms
+	deserialization:  16ms
 [JSON, GZIP]
-	serialization:    211ms
+	serialization:    238ms
 	serialized size:  3711kB
-	deserialization:  61ms
+	deserialization:  40ms
 [JSON, ZSTD_1]
-	serialization:    36ms
+	serialization:    30ms
 	serialized size:  2992kB
-	deserialization:  32ms
+	deserialization:  22ms
 [JSON, ZSTD_3]
-	serialization:    57ms
+	serialization:    51ms
 	serialized size:  3108kB
-	deserialization:  33ms
+	deserialization:  23ms
 [JSON, ZSTD_9]
-	serialization:    167ms
+	serialization:    140ms
 	serialized size:  3029kB
-	deserialization:  37ms
+	deserialization:  26ms
 ---
 [ARROW-IPC]
-	serialization:    3ms
+	serialization:    2ms
 	serialized size:  8481kB
 	deserialization:  2ms
 [ARROW-IPC, ZSTD]
-	serialization:    16ms
+	serialization:    17ms
 	serialized size:  2723kB
+	deserialization:  4ms
+[ARROW-IPC, light_compressed]
+	serialization:    2ms
+	serialized size:  3777kB
 	deserialization:  4ms
 ---
 [PARQUET]
-	serialization:    6ms
+	serialization:    5ms
 	serialized size:  7527kB
 	deserialization:  3ms
 [PARQUET, ZSTD_1]
-	serialization:    15ms
+	serialization:    13ms
 	serialized size:  2770kB
-	deserialization:  6ms
+	deserialization:  5ms
 [PARQUET, ZSTD_3]
 	serialization:    18ms
 	serialized size:  2653kB
-	deserialization:  6ms
+	deserialization:  5ms
 [PARQUET, ZSTD_9]
-	serialization:    55ms
+	serialization:    52ms
 	serialized size:  2600kB
+	deserialization:  6ms
+---
+[FLATBUFFERS]
+	serialization:    3ms
+	serialized size:  8847kB
+	deserialization:  3ms
+[FLATBUFFERS-CUSTOM, ZSTD_1]
+	serialization:    15ms
+	serialized size:  2998kB
+	deserialization:  6ms
+[FLATBUFFERS-CUSTOM, ZSTD_3]
+	serialization:    23ms
+	serialized size:  2735kB
+	deserialization:  6ms
+[FLATBUFFERS-CUSTOM, ZSTD_9]
+	serialization:    62ms
+	serialized size:  2586kB
 	deserialization:  6ms
 
 ====================================================
 ```
+
