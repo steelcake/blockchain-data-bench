@@ -15,7 +15,7 @@ const SerializeOutput = extern struct {
     ptr: [*]u8,
 };
 
-export fn serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema) callconv(.c) SerializeOutput {
+export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema) callconv(.c) SerializeOutput {
     var arena = ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
@@ -82,7 +82,7 @@ export fn serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema) callconv(.
     };
 }
 
-export fn deserialize(data: SerializeOutput, array_out: *FFI_ArrowArray, schema_out: *FFI_ArrowSchema) callconv(.c) void {
+export fn olivers_ffi_deserialize(data: SerializeOutput, array_out: *FFI_ArrowArray, schema_out: *FFI_ArrowSchema) callconv(.c) void {
     defer std.heap.page_allocator.free(data.ptr[0..data.alloc_len]);
 
     var arena = ArenaAllocator.init(std.heap.page_allocator);

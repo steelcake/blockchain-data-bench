@@ -3,6 +3,7 @@ use arrow::array::{
     RunArray, StructArray, UInt64Array, builder,
 };
 use arrow::datatypes::{DataType, Field, Int32Type, Schema, UInt64Type};
+use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::record_batch::RecordBatch;
 use arrow_convert::{
     ArrowDeserialize, ArrowField, ArrowSerialize, deserialize::TryIntoCollection,
@@ -21,6 +22,8 @@ use futures_lite::StreamExt;
 use tikv_jemallocator::Jemalloc;
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
+
+mod olive;
 
 #[allow(warnings)]
 #[path = "./transaction_generated.rs"]
@@ -72,6 +75,9 @@ async fn main() {
         benchmark_flatbuffers_compressed(&transactions, 3); // ZSTD level 3
         benchmark_flatbuffers_compressed(&transactions, 9); // ZSTD level 9
 
+        // Benchmark olive
+        benchmark_olive(&transactions);
+
         println!("\n====================================================\n");
     }
 }
@@ -110,6 +116,24 @@ async fn fetch_transactions() -> Vec<Transaction> {
     }
 
     transactions
+}
+
+fn benchmark_olive(transactions: &[Transaction]) {
+    let start = Instant::now();
+    let olive_data = to_olive(&transactions);
+
+    println!("[OLIVE]");
+    println!("\tserialization:    {}ms", start.elapsed().as_millis());
+    println!("\tserialized size:  {}kB", olive_data.len() / (1 << 10));
+
+    let start = Instant::now();
+    let mut olive_data = from_olive(&olive_data);
+
+    println!("\tdeserialization:  {}ms", start.elapsed().as_millis());
+
+    for (left, right) in transactions.iter().zip(olive_data.iter()) {
+        assert_eq!(left, right);
+    }
 }
 
 fn benchmark_arrow_ipc(
@@ -345,6 +369,51 @@ fn from_json(data: &[u8], compression: JsonCompression) -> Vec<Transaction> {
     };
 
     simd_json::from_slice(&mut decompressed).unwrap()
+}
+
+#[repr(C)]
+struct SerializeOutput {
+    len: u32,
+    alloc_len: u32,
+    ptr: *mut u8,
+}
+
+#[link(name = "olivers")]
+unsafe extern "C" {
+    fn olivers_ffi_serialize(
+        array: *mut FFI_ArrowArray,
+        schema: *mut FFI_ArrowSchema,
+    ) -> SerializeOutput;
+
+    fn olivers_ffi_deserialize(
+        data: SerializeOutput,
+        array_out: *mut FFI_ArrowArray,
+        schema_out: *mut FFI_ArrowSchema,
+    );
+}
+
+fn to_olive(data: &[Transaction]) -> &'static [u8] {
+    let batch = Transaction::to_arrow(data);
+
+    let arr_data = StructArray::from(batch).into_data();
+    let (mut ffi_arr, mut ffi_schema) = arrow::ffi::to_ffi(&arr_data).unwrap();
+
+    let out = unsafe { olivers_ffi_serialize(&mut ffi_arr, &mut ffi_schema) };
+
+    println!("ANAN");
+
+    let out = unsafe { std::slice::from_raw_parts(out.ptr, usize::try_from(out.len).unwrap()) };
+
+    std::mem::forget(ffi_arr);
+    std::mem::forget(ffi_schema);
+
+    out
+}
+
+fn from_olive(data: &'static [u8]) -> Vec<Transaction> {
+    // unsafe { olivers_ffi_deserialize(SerializeOutput, array_out, schema_out);}
+
+    todo!()
 }
 
 fn to_arrow_ipc(data: &[Transaction], use_compression: bool, light_compressed: bool) -> Vec<u8> {

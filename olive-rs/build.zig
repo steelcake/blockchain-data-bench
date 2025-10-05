@@ -31,9 +31,10 @@ pub fn build(b: *std.Build) void {
     const lib = b.addLibrary(.{
         .name = "olivers",
         .root_module = mod,
-        .linkage = .dynamic,
+        .linkage = .static,
         .use_llvm = true,
     });
+    lib.bundle_compiler_rt = true;
 
     b.installArtifact(lib);
 }
