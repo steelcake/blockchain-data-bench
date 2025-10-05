@@ -10,15 +10,15 @@ Example result:
 
 ```
 [JSON]
-        serialization:    14ms
+        serialization:    13ms
         serialized size:  17477kB
         deserialization:  11ms
 [JSON, GZIP]
-        serialization:    217ms
+        serialization:    214ms
         serialized size:  3711kB
-        deserialization:  34ms
+        deserialization:  33ms
 [JSON, ZSTD_1]
-        serialization:    30ms
+        serialization:    29ms
         serialized size:  2992kB
         deserialization:  17ms
 [JSON, ZSTD_3]
@@ -28,14 +28,14 @@ Example result:
 [JSON, ZSTD_9]
         serialization:    125ms
         serialized size:  3029kB
-        deserialization:  21ms
+        deserialization:  22ms
 ---
 [ARROW-IPC]
         serialization:    2ms
         serialized size:  8481kB
         deserialization:  1ms
 [ARROW-IPC, ZSTD]
-        serialization:    14ms
+        serialization:    15ms
         serialized size:  2723kB
         deserialization:  3ms
 [ARROW-IPC, light_compressed]
@@ -73,16 +73,23 @@ Example result:
         serialized size:  2735kB
         deserialization:  6ms
 [FLATBUFFERS-CUSTOM, ZSTD_9]
-        serialization:    53ms
+        serialization:    56ms
         serialized size:  2586kB
         deserialization:  6ms
 ---
-olive write IN 7ms
 [OLIVE]
-        serialization:    216ms
-        serialized size:  2790kB
-olive read IN 2ms
+olive from_arrow in 3ms
+olive write in 6ms
+olive header write in 0ms
+olive schema write in 0ms
+        serialization:    12ms
+        serialized size:  2784kB
+olive schema read in 0ms
+olive header read in 0ms
+olive read in 2ms
+olive to_arrow in 0ms
+olive read finish in 0ms
         deserialization:  5ms
+
 ====================================================
 ```
-

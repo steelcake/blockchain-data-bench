@@ -3,8 +3,8 @@
     .version = "0.0.1",
     .dependencies = .{
         .olive = .{
-            .url = "https://github.com/steelcake/olive/archive/refs/tags/v0.0.2.tar.gz",
-            .hash = "olive-0.0.2-3pJyLHhUAgAO9m2lyDbXVLu3f2nOHXejHhsu0x-PN1qw",
+            .url = "https://github.com/steelcake/olive/archive/refs/tags/v0.0.5.tar.gz",
+            .hash = "olive-0.0.5-3pJyLHdUAgAJjfdSU9Cr77T0zBwf_KwgOhCcbOewVuTE",
         },
         .arrow = .{
             .url = "https://github.com/steelcake/arrow-zig/archive/refs/tags/v0.0.24.tar.gz",

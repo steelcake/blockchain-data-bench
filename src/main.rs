@@ -116,10 +116,11 @@ async fn fetch_transactions() -> Vec<Transaction> {
 }
 
 fn benchmark_olive(transactions: &[Transaction]) {
+    println!("[OLIVE]");
+
     let start = Instant::now();
     let olive_data = to_olive(&transactions);
 
-    println!("[OLIVE]");
     println!("\tserialization:    {}ms", start.elapsed().as_millis());
     println!("\tserialized size:  {}kB", olive_data.len() / (1 << 10));
 

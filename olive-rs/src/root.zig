@@ -19,6 +19,10 @@ const SerializeOutput = extern struct {
 
 const ALLOC_SIZE = 1 << 25;
 
+fn timer() std.time.Timer {
+    return std.time.Timer.start() catch unreachable;
+}
+
 export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema) callconv(.c) SerializeOutput {
     var arena = ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -69,9 +73,11 @@ export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema
         },
     };
 
+    var t = timer();
+
     const chunk = olive.chunk.Chunk.from_arrow(&olive_schema, &.{imported_s_array.field_values}, alloc, alloc) catch unreachable;
 
-    const start_t = std.time.Instant.now() catch unreachable;
+    std.debug.print("olive from_arrow in {}ms\n", .{t.lap() / 1000 / 1000});
 
     const header = olive.write.write(.{
         .chunk = &chunk,
@@ -79,14 +85,12 @@ export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema
         .header_alloc = alloc,
         .filter_alloc = null,
         .data_section = output[output_len..],
-        .page_size_kb = 1024,
+        .page_size_kb = null,
         .scratch_alloc = alloc,
     }) catch unreachable;
     output_len += header.data_section_size;
 
-    const end_t = std.time.Instant.now() catch unreachable;
-
-    std.debug.print("olive write IN {}ms\n", .{ end_t.since(start_t) / 1000 / 1000 });
+    std.debug.print("olive write in {}ms\n", .{t.lap() / 1000 / 1000});
 
     const header_len = borsh.serde.serialize(olive.header.Header, &header, output[output_len..], 40) catch unreachable;
     output_len += header_len;
@@ -94,11 +98,15 @@ export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema
     @memcpy(output[output_len .. output_len + 4], std.mem.asBytes(&header_size));
     output_len += 4;
 
+    std.debug.print("olive header write in {}ms\n", .{t.lap() / 1000 / 1000});
+
     const schema_len = borsh.serde.serialize(olive.schema.Schema, &olive_schema, output[output_len..], 40) catch unreachable;
     output_len += schema_len;
     const schema_size = @as(u32, @intCast(schema_len));
     @memcpy(output[output_len .. output_len + 4], std.mem.asBytes(&schema_size));
     output_len += 4;
+    
+    std.debug.print("olive schema write in {}ms\n", .{t.lap() / 1000 / 1000});
 
     return .{
         .len = @intCast(output_len),
@@ -114,11 +122,15 @@ export fn olivers_ffi_deserialize(data: SerializeOutput, array_out: *FFI_ArrowAr
 
     var data_end = data.len;
 
+    var t = timer();
+
     const schema_len = std.mem.readVarInt(u32, data.ptr[data_end - 4 .. data_end], .little);
     data_end -= 4;
     const schema_bytes = data.ptr[data_end - schema_len .. data_end];
     data_end -= @intCast(schema_bytes.len);
     const schema = borsh.serde.deserialize(olive.schema.Schema, schema_bytes, alloc, 40) catch unreachable;
+
+    std.debug.print("olive schema read in {}ms\n", .{t.lap() / 1000 / 1000});
 
     const header_len = std.mem.readVarInt(u32, data.ptr[data_end - 4 .. data_end], .little);
     data_end -= 4;
@@ -126,7 +138,7 @@ export fn olivers_ffi_deserialize(data: SerializeOutput, array_out: *FFI_ArrowAr
     data_end -= @intCast(header_bytes.len);
     const header = borsh.serde.deserialize(olive.header.Header, header_bytes, alloc, 40) catch unreachable;
 
-    const start_t = std.time.Instant.now() catch unreachable;
+    std.debug.print("olive header read in {}ms\n", .{t.lap() / 1000 / 1000});
 
     const chunk = olive.read.read(.{
         .schema = &schema,
@@ -136,12 +148,12 @@ export fn olivers_ffi_deserialize(data: SerializeOutput, array_out: *FFI_ArrowAr
         .header = &header,
     }) catch unreachable;
 
-    const end_t = std.time.Instant.now() catch unreachable;
-
-    std.debug.print("olive read IN {}ms\n", .{ end_t.since(start_t) / 1000 / 1000 });
+    std.debug.print("olive read in {}ms\n", .{t.lap() / 1000 / 1000});
 
     const arrow_tables = chunk.to_arrow(alloc) catch unreachable;
     const fields = arrow_tables[0];
+
+    std.debug.print("olive to_arrow in {}ms\n", .{t.lap() / 1000 / 1000});
 
     const table_s = schema.tables[0];
 
@@ -170,4 +182,6 @@ export fn olivers_ffi_deserialize(data: SerializeOutput, array_out: *FFI_ArrowAr
 
     array_out.* = ffi_arr.array;
     schema_out.* = ffi_arr.schema;
+
+    std.debug.print("olive read finish in {}ms\n", .{t.lap() / 1000 / 1000});
 }
