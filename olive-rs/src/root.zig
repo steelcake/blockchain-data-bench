@@ -11,9 +11,10 @@ const FFI_ArrowSchema = arrow.ffi.abi.ArrowSchema;
 
 const SerializeOutput = extern struct {
     len: u32,
-    alloc_len: u32,
     ptr: [*]u8,
 };
+
+const ALLOC_SIZE = 1 << 25;
 
 export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema) callconv(.c) SerializeOutput {
     var arena = ArenaAllocator.init(std.heap.page_allocator);
@@ -29,7 +30,7 @@ export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema
     const imported_array = arrow.ffi.import_array(&ffi_array, alloc) catch unreachable;
     const imported_s_array = imported_array.struct_;
 
-    const output = std.heap.page_allocator.alloc(u8, 1 << 25) catch unreachable;
+    const output = std.heap.page_allocator.alloc(u8, ALLOC_SIZE) catch unreachable;
     var output_len: usize = 0;
 
     const imported_dt = arrow.data_type.get_data_type(&imported_array, alloc) catch unreachable;
@@ -77,13 +78,12 @@ export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema
 
     return .{
         .len = @intCast(output_len),
-        .alloc_len = @intCast(output.len),
         .ptr = output.ptr,
     };
 }
 
 export fn olivers_ffi_deserialize(data: SerializeOutput, array_out: *FFI_ArrowArray, schema_out: *FFI_ArrowSchema) callconv(.c) void {
-    defer std.heap.page_allocator.free(data.ptr[0..data.alloc_len]);
+    defer std.heap.page_allocator.free(data.ptr[0..ALLOC_SIZE]);
 
     var arena = ArenaAllocator.init(std.heap.page_allocator);
     const alloc = arena.allocator();

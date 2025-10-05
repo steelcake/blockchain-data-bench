@@ -1,7 +1,7 @@
 run
 
 ```
-RUSTFLAGS="-C target-cpu=native" cargo run --release
+make run
 ```
 
 to see the results.

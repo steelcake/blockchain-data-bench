@@ -1,6 +1,6 @@
 use arrow::array::{
-    Array, ArrayRef, BinaryArray, BinaryDictionaryBuilder, DictionaryArray, PrimitiveRunBuilder,
-    RunArray, StructArray, UInt64Array, builder,
+    Array, ArrayRef, AsArray, BinaryArray, BinaryDictionaryBuilder, DictionaryArray,
+    PrimitiveRunBuilder, RunArray, StructArray, UInt64Array, builder, make_array,
 };
 use arrow::datatypes::{DataType, Field, Int32Type, Schema, UInt64Type};
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
@@ -23,8 +23,6 @@ use tikv_jemallocator::Jemalloc;
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
-mod olive;
-
 #[allow(warnings)]
 #[path = "./transaction_generated.rs"]
 mod transaction_generated;
@@ -44,42 +42,41 @@ enum JsonCompression {
 async fn main() {
     let transactions = fetch_transactions().await;
 
-    for _ in 0..4 {
-        // Benchmark JSON with different compression options
-        benchmark_json(&transactions, JsonCompression::None); // No compression
-        benchmark_json(&transactions, JsonCompression::Gzip); // GZIP compression
-        benchmark_json(&transactions, JsonCompression::Zstd(1)); // ZSTD level 1
-        benchmark_json(&transactions, JsonCompression::Zstd(3)); // ZSTD level 3
-        benchmark_json(&transactions, JsonCompression::Zstd(9)); // ZSTD level 9
-        println!("---");
+    // Benchmark JSON with different compression options
+    benchmark_json(&transactions, JsonCompression::None); // No compression
+    benchmark_json(&transactions, JsonCompression::Gzip); // GZIP compression
+    benchmark_json(&transactions, JsonCompression::Zstd(1)); // ZSTD level 1
+    benchmark_json(&transactions, JsonCompression::Zstd(3)); // ZSTD level 3
+    benchmark_json(&transactions, JsonCompression::Zstd(9)); // ZSTD level 9
+    println!("---");
 
-        // Benchmark Arrow IPC without compression
-        benchmark_arrow_ipc(&transactions, false, false);
-        // Benchmark Arrow IPC with ZSTD compression
-        benchmark_arrow_ipc(&transactions, true, false);
-        // Benchmark Arrow IPC with light compression
-        benchmark_arrow_ipc(&transactions, false, true);
-        println!("---");
+    // Benchmark Arrow IPC without compression
+    benchmark_arrow_ipc(&transactions, false, false);
+    // Benchmark Arrow IPC with ZSTD compression
+    benchmark_arrow_ipc(&transactions, true, false);
+    // Benchmark Arrow IPC with light compression
+    benchmark_arrow_ipc(&transactions, false, true);
+    println!("---");
 
-        // Parquet with different compression levels
-        benchmark_parquet(&transactions, None); // No compression
-        benchmark_parquet(&transactions, Some(1)); // Fastest compression
-        benchmark_parquet(&transactions, Some(3)); // Balanced compression
-        benchmark_parquet(&transactions, Some(9)); // Best compression
-        println!("---");
+    // Parquet with different compression levels
+    benchmark_parquet(&transactions, None); // No compression
+    benchmark_parquet(&transactions, Some(1)); // Fastest compression
+    benchmark_parquet(&transactions, Some(3)); // Balanced compression
+    benchmark_parquet(&transactions, Some(9)); // Best compression
+    println!("---");
 
-        // Benchmark FlatBuffers implementation
-        benchmark_flatbuffers(&transactions);
-        // Benchmark FlatBuffers implementation with ZSTD compression
-        benchmark_flatbuffers_compressed(&transactions, 1); // ZSTD level 1
-        benchmark_flatbuffers_compressed(&transactions, 3); // ZSTD level 3
-        benchmark_flatbuffers_compressed(&transactions, 9); // ZSTD level 9
+    // Benchmark FlatBuffers implementation
+    benchmark_flatbuffers(&transactions);
+    // Benchmark FlatBuffers implementation with ZSTD compression
+    benchmark_flatbuffers_compressed(&transactions, 1); // ZSTD level 1
+    benchmark_flatbuffers_compressed(&transactions, 3); // ZSTD level 3
+    benchmark_flatbuffers_compressed(&transactions, 9); // ZSTD level 9
+    println!("---");
 
-        // Benchmark olive
-        benchmark_olive(&transactions);
+    // Benchmark olive
+    benchmark_olive(&transactions);
 
-        println!("\n====================================================\n");
-    }
+    println!("\n====================================================\n");
 }
 
 async fn fetch_transactions() -> Vec<Transaction> {
@@ -127,7 +124,7 @@ fn benchmark_olive(transactions: &[Transaction]) {
     println!("\tserialized size:  {}kB", olive_data.len() / (1 << 10));
 
     let start = Instant::now();
-    let mut olive_data = from_olive(&olive_data);
+    let olive_data = from_olive(&olive_data);
 
     println!("\tdeserialization:  {}ms", start.elapsed().as_millis());
 
@@ -374,7 +371,6 @@ fn from_json(data: &[u8], compression: JsonCompression) -> Vec<Transaction> {
 #[repr(C)]
 struct SerializeOutput {
     len: u32,
-    alloc_len: u32,
     ptr: *mut u8,
 }
 
@@ -400,8 +396,6 @@ fn to_olive(data: &[Transaction]) -> &'static [u8] {
 
     let out = unsafe { olivers_ffi_serialize(&mut ffi_arr, &mut ffi_schema) };
 
-    println!("ANAN");
-
     let out = unsafe { std::slice::from_raw_parts(out.ptr, usize::try_from(out.len).unwrap()) };
 
     std::mem::forget(ffi_arr);
@@ -411,9 +405,25 @@ fn to_olive(data: &[Transaction]) -> &'static [u8] {
 }
 
 fn from_olive(data: &'static [u8]) -> Vec<Transaction> {
-    // unsafe { olivers_ffi_deserialize(SerializeOutput, array_out, schema_out);}
+    let mut ffi_arr: FFI_ArrowArray = unsafe { std::mem::zeroed() };
+    let mut ffi_schema: FFI_ArrowSchema = unsafe { std::mem::zeroed() };
+    unsafe {
+        olivers_ffi_deserialize(
+            SerializeOutput {
+                ptr: data.as_ptr() as *mut _,
+                len: u32::try_from(data.len()).unwrap(),
+            },
+            &mut ffi_arr,
+            &mut ffi_schema,
+        );
+    }
 
-    todo!()
+    let arr_data = unsafe { arrow::ffi::from_ffi(ffi_arr, &ffi_schema).unwrap() };
+    let arr = make_array(arr_data);
+
+    let batch = RecordBatch::try_from(arr.as_struct()).unwrap();
+
+    Transaction::from_arrow(&batch)
 }
 
 fn to_arrow_ipc(data: &[Transaction], use_compression: bool, light_compressed: bool) -> Vec<u8> {
