@@ -1,5 +1,8 @@
 const std = @import("std");
+const posix = std.posix;
+const linux = std.os.linux;
 const ArenaAllocator = std.heap.ArenaAllocator;
+const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 
 const olive = @import("olive");
 
@@ -48,21 +51,42 @@ export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema
             .data_types = imported_s_dt.field_types,
             .field_names = imported_s_array.field_names,
         }},
-        .dicts = &.{},
+        .dicts = &.{
+            olive.schema.DictSchema {
+                .has_filter = false,
+                .byte_width = 20,
+                .members = &.{
+                    olive.schema.DictMember {
+                        .table_index = 0,
+                        .field_index = 2,
+                    },
+                    olive.schema.DictMember {
+                        .table_index = 0,
+                        .field_index = 5,
+                    },
+                },
+            },
+        },
     };
 
     const chunk = olive.chunk.Chunk.from_arrow(&olive_schema, &.{imported_s_array.field_values}, alloc, alloc) catch unreachable;
 
+    const start_t = std.time.Instant.now() catch unreachable;
+
     const header = olive.write.write(.{
         .chunk = &chunk,
-        .compression = .{ .zstd = 3 },
+        .compression = .{ .zstd = 1 },
         .header_alloc = alloc,
         .filter_alloc = null,
         .data_section = output[output_len..],
-        .page_size_kb = null,
+        .page_size_kb = 1024,
         .scratch_alloc = alloc,
     }) catch unreachable;
     output_len += header.data_section_size;
+
+    const end_t = std.time.Instant.now() catch unreachable;
+
+    std.debug.print("olive write IN {}ms\n", .{ end_t.since(start_t) / 1000 / 1000 });
 
     const header_len = borsh.serde.serialize(olive.header.Header, &header, output[output_len..], 40) catch unreachable;
     output_len += header_len;
@@ -102,6 +126,8 @@ export fn olivers_ffi_deserialize(data: SerializeOutput, array_out: *FFI_ArrowAr
     data_end -= @intCast(header_bytes.len);
     const header = borsh.serde.deserialize(olive.header.Header, header_bytes, alloc, 40) catch unreachable;
 
+    const start_t = std.time.Instant.now() catch unreachable;
+
     const chunk = olive.read.read(.{
         .schema = &schema,
         .scratch_alloc = alloc,
@@ -109,6 +135,10 @@ export fn olivers_ffi_deserialize(data: SerializeOutput, array_out: *FFI_ArrowAr
         .alloc = alloc,
         .header = &header,
     }) catch unreachable;
+
+    const end_t = std.time.Instant.now() catch unreachable;
+
+    std.debug.print("olive read IN {}ms\n", .{ end_t.since(start_t) / 1000 / 1000 });
 
     const arrow_tables = chunk.to_arrow(alloc) catch unreachable;
     const fields = arrow_tables[0];

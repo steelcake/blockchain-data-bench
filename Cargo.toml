@@ -26,3 +26,7 @@ mimalloc = "0.1.46"
 
 [build-dependencies]
 which = "4.4"
+
+[profile.release]
+debug = true
+strip = false
