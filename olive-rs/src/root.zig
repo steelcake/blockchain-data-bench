@@ -24,9 +24,11 @@ fn timer() std.time.Timer {
 }
 
 export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema) callconv(.c) SerializeOutput {
-    var arena = ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const mem = alloc_thp(ALLOC_SIZE) orelse unreachable;
+    std.debug.assert(mem.len == ALLOC_SIZE);
+    defer posix.munmap(mem);
+    var fb_alloc = FixedBufferAllocator.init(mem);
+    const alloc = fb_alloc.allocator();
 
     var ffi_array = arrow.ffi.FFI_Array{
         .array = array.*,
@@ -37,7 +39,8 @@ export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema
     const imported_array = arrow.ffi.import_array(&ffi_array, alloc) catch unreachable;
     const imported_s_array = imported_array.struct_;
 
-    const output = std.heap.page_allocator.alloc(u8, ALLOC_SIZE) catch unreachable;
+    const output = alloc_thp(ALLOC_SIZE) orelse unreachable;
+    std.debug.assert(output.len == ALLOC_SIZE);
     var output_len: usize = 0;
 
     const imported_dt = arrow.data_type.get_data_type(&imported_array, alloc) catch unreachable;
@@ -56,15 +59,15 @@ export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema
             .field_names = imported_s_array.field_names,
         }},
         .dicts = &.{
-            olive.schema.DictSchema {
+            olive.schema.DictSchema{
                 .has_filter = false,
                 .byte_width = 20,
                 .members = &.{
-                    olive.schema.DictMember {
+                    olive.schema.DictMember{
                         .table_index = 0,
                         .field_index = 2,
                     },
-                    olive.schema.DictMember {
+                    olive.schema.DictMember{
                         .table_index = 0,
                         .field_index = 5,
                     },
@@ -77,7 +80,7 @@ export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema
 
     const chunk = olive.chunk.Chunk.from_arrow(&olive_schema, &.{imported_s_array.field_values}, alloc, alloc) catch unreachable;
 
-    std.debug.print("olive from_arrow in {}ms\n", .{t.lap() / 1000 / 1000});
+    std.debug.print("olive from_arrow in {}us\n", .{t.lap() / 1000});
 
     const header = olive.write.write(.{
         .chunk = &chunk,
@@ -90,7 +93,7 @@ export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema
     }) catch unreachable;
     output_len += header.data_section_size;
 
-    std.debug.print("olive write in {}ms\n", .{t.lap() / 1000 / 1000});
+    std.debug.print("olive write in {}us\n", .{t.lap() / 1000});
 
     const header_len = borsh.serde.serialize(olive.header.Header, &header, output[output_len..], 40) catch unreachable;
     output_len += header_len;
@@ -98,15 +101,15 @@ export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema
     @memcpy(output[output_len .. output_len + 4], std.mem.asBytes(&header_size));
     output_len += 4;
 
-    std.debug.print("olive header write in {}ms\n", .{t.lap() / 1000 / 1000});
+    std.debug.print("olive header write in {}us\n", .{t.lap() / 1000});
 
     const schema_len = borsh.serde.serialize(olive.schema.Schema, &olive_schema, output[output_len..], 40) catch unreachable;
     output_len += schema_len;
     const schema_size = @as(u32, @intCast(schema_len));
     @memcpy(output[output_len .. output_len + 4], std.mem.asBytes(&schema_size));
     output_len += 4;
-    
-    std.debug.print("olive schema write in {}ms\n", .{t.lap() / 1000 / 1000});
+
+    std.debug.print("olive schema write in {}us\n", .{t.lap() / 1000});
 
     return .{
         .len = @intCast(output_len),
@@ -115,7 +118,7 @@ export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema
 }
 
 export fn olivers_ffi_deserialize(data: SerializeOutput, array_out: *FFI_ArrowArray, schema_out: *FFI_ArrowSchema) callconv(.c) void {
-    defer std.heap.page_allocator.free(data.ptr[0..ALLOC_SIZE]);
+    defer posix.munmap(@alignCast(data.ptr[0..ALLOC_SIZE]));
 
     var arena = ArenaAllocator.init(std.heap.page_allocator);
     const alloc = arena.allocator();
@@ -130,7 +133,7 @@ export fn olivers_ffi_deserialize(data: SerializeOutput, array_out: *FFI_ArrowAr
     data_end -= @intCast(schema_bytes.len);
     const schema = borsh.serde.deserialize(olive.schema.Schema, schema_bytes, alloc, 40) catch unreachable;
 
-    std.debug.print("olive schema read in {}ms\n", .{t.lap() / 1000 / 1000});
+    std.debug.print("olive schema read in {}us\n", .{t.lap() / 1000});
 
     const header_len = std.mem.readVarInt(u32, data.ptr[data_end - 4 .. data_end], .little);
     data_end -= 4;
@@ -138,7 +141,7 @@ export fn olivers_ffi_deserialize(data: SerializeOutput, array_out: *FFI_ArrowAr
     data_end -= @intCast(header_bytes.len);
     const header = borsh.serde.deserialize(olive.header.Header, header_bytes, alloc, 40) catch unreachable;
 
-    std.debug.print("olive header read in {}ms\n", .{t.lap() / 1000 / 1000});
+    std.debug.print("olive header read in {}us\n", .{t.lap() / 1000});
 
     const chunk = olive.read.read(.{
         .schema = &schema,
@@ -148,12 +151,12 @@ export fn olivers_ffi_deserialize(data: SerializeOutput, array_out: *FFI_ArrowAr
         .header = &header,
     }) catch unreachable;
 
-    std.debug.print("olive read in {}ms\n", .{t.lap() / 1000 / 1000});
+    std.debug.print("olive read in {}us\n", .{t.lap() / 1000});
 
     const arrow_tables = chunk.to_arrow(alloc) catch unreachable;
     const fields = arrow_tables[0];
 
-    std.debug.print("olive to_arrow in {}ms\n", .{t.lap() / 1000 / 1000});
+    std.debug.print("olive to_arrow in {}us\n", .{t.lap() / 1000});
 
     const table_s = schema.tables[0];
 
@@ -183,5 +186,33 @@ export fn olivers_ffi_deserialize(data: SerializeOutput, array_out: *FFI_ArrowAr
     array_out.* = ffi_arr.array;
     schema_out.* = ffi_arr.schema;
 
-    std.debug.print("olive read finish in {}ms\n", .{t.lap() / 1000 / 1000});
+    std.debug.print("olive read finish in {}us\n", .{t.lap() / 1000});
+}
+
+fn alloc_thp(size: usize) ?[]align(1 << 12) u8 {
+    if (size == 0) {
+        return null;
+    }
+    const alloc_size = align_forward(size, 1 << 21);
+    const page = mmap_wrapper(alloc_size, 0) orelse return null;
+    posix.madvise(page.ptr, page.len, posix.MADV.HUGEPAGE) catch {
+        posix.munmap(page);
+        return null;
+    };
+    return page;
+}
+
+fn mmap_wrapper(size: usize, huge_page_flag: u32) ?[]align(1 << 12) u8 {
+    if (size == 0) {
+        return null;
+    }
+    const flags = linux.MAP{ .TYPE = .PRIVATE, .ANONYMOUS = true, .HUGETLB = huge_page_flag != 0, .POPULATE = true, .LOCKED = true };
+    const flags_int: u32 = @bitCast(flags);
+    const flags_f: linux.MAP = @bitCast(flags_int | huge_page_flag);
+    const page = posix.mmap(null, size, posix.PROT.READ | posix.PROT.WRITE, flags_f, -1, 0) catch return null;
+    return page;
+}
+
+pub fn align_forward(addr: usize, alignment: usize) usize {
+    return (addr +% alignment -% 1) & ~(alignment -% 1);
 }

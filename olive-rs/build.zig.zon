@@ -3,16 +3,16 @@
     .version = "0.0.1",
     .dependencies = .{
         .olive = .{
-            .url = "https://github.com/steelcake/olive/archive/refs/tags/v0.0.5.tar.gz",
-            .hash = "olive-0.0.5-3pJyLHdUAgAJjfdSU9Cr77T0zBwf_KwgOhCcbOewVuTE",
+            .url = "https://github.com/steelcake/olive/archive/refs/tags/v0.0.7.tar.gz",
+            .hash = "olive-0.0.7-3pJyLHJTAgB4uUh9dQZZy8GB7vU48WZrtvE0IuEWnNCV",
         },
         .arrow = .{
-            .url = "https://github.com/steelcake/arrow-zig/archive/refs/tags/v0.0.24.tar.gz",
-            .hash = "arrow-0.0.24-ZFEaqCH2BgDhvXAd4aGBXf0xpKPCJD8E47H3UOd2pf8b",
+            .url = "https://github.com/steelcake/arrow-zig/archive/refs/tags/v0.0.27.tar.gz",
+            .hash = "arrow-0.0.27-ZFEaqAoUBwASyVZnwiF43oEzpe-WkDq-jitaldyGBBM4",
         },
         .borsh = .{
-            .url = "https://github.com/steelcake/borsh-zig/archive/refs/tags/v0.0.9.tar.gz",
-            .hash = "borsh-0.0.9-vlKk2WZ_AAC5LVDtqywZ561SQMJIcejm5FwojK4tQMiE",
+            .url = "https://github.com/steelcake/borsh-zig/archive/refs/tags/v0.0.10.tar.gz",
+            .hash = "borsh-0.0.10-vlKk2QB9AACRenmDqEZao_Jzs4xV-02GvqndICSZz6Ep",
         },
     },
     .minimum_zig_version = "0.16.0-dev.464+df1909900",

@@ -14,28 +14,28 @@ Example result:
         serialized size:  17477kB
         deserialization:  11ms
 [JSON, GZIP]
-        serialization:    214ms
+        serialization:    215ms
         serialized size:  3711kB
         deserialization:  33ms
 [JSON, ZSTD_1]
-        serialization:    29ms
+        serialization:    28ms
         serialized size:  2992kB
         deserialization:  17ms
 [JSON, ZSTD_3]
-        serialization:    46ms
+        serialization:    45ms
         serialized size:  3108kB
-        deserialization:  19ms
+        deserialization:  18ms
 [JSON, ZSTD_9]
-        serialization:    125ms
+        serialization:    124ms
         serialized size:  3029kB
-        deserialization:  22ms
+        deserialization:  21ms
 ---
 [ARROW-IPC]
         serialization:    2ms
         serialized size:  8481kB
         deserialization:  1ms
 [ARROW-IPC, ZSTD]
-        serialization:    15ms
+        serialization:    14ms
         serialized size:  2723kB
         deserialization:  3ms
 [ARROW-IPC, light_compressed]
@@ -50,13 +50,13 @@ Example result:
 [PARQUET, ZSTD_1]
         serialization:    12ms
         serialized size:  2770kB
-        deserialization:  5ms
+        deserialization:  4ms
 [PARQUET, ZSTD_3]
         serialization:    16ms
         serialized size:  2653kB
         deserialization:  5ms
 [PARQUET, ZSTD_9]
-        serialization:    45ms
+        serialization:    46ms
         serialized size:  2600kB
         deserialization:  4ms
 ---
@@ -71,25 +71,25 @@ Example result:
 [FLATBUFFERS-CUSTOM, ZSTD_3]
         serialization:    20ms
         serialized size:  2735kB
-        deserialization:  6ms
+        deserialization:  7ms
 [FLATBUFFERS-CUSTOM, ZSTD_9]
-        serialization:    56ms
+        serialization:    54ms
         serialized size:  2586kB
         deserialization:  6ms
 ---
 [OLIVE]
-olive from_arrow in 3ms
-olive write in 6ms
-olive header write in 0ms
-olive schema write in 0ms
-        serialization:    12ms
+olive from_arrow in 1667us
+olive write in 6781us
+olive header write in 4us
+olive schema write in 4us
+        serialization:    11ms
         serialized size:  2784kB
-olive schema read in 0ms
-olive header read in 0ms
-olive read in 2ms
-olive to_arrow in 0ms
-olive read finish in 0ms
-        deserialization:  5ms
+olive schema read in 10us
+olive header read in 3us
+olive read in 2401us
+olive to_arrow in 180us
+olive read finish in 7us
+        deserialization:  4ms
 
 ====================================================
 ```

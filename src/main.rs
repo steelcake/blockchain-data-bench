@@ -119,13 +119,13 @@ fn benchmark_olive(transactions: &[Transaction]) {
     println!("[OLIVE]");
 
     let start = Instant::now();
-    let olive_data = to_olive(&transactions);
+    let olive_data = to_olive(transactions);
 
     println!("\tserialization:    {}ms", start.elapsed().as_millis());
     println!("\tserialized size:  {}kB", olive_data.len() / (1 << 10));
 
     let start = Instant::now();
-    let olive_data = from_olive(&olive_data);
+    let olive_data = from_olive(olive_data);
 
     println!("\tdeserialization:  {}ms", start.elapsed().as_millis());
 
@@ -159,7 +159,7 @@ fn benchmark_arrow_ipc(
             if let Some(input) = tx.input.as_ref() {
                 tx.input = Some(
                     lz4::block::compress(
-                        &input,
+                        input,
                         Some(lz4::block::CompressionMode::HIGHCOMPRESSION(9)),
                         true,
                     )
@@ -184,7 +184,7 @@ fn benchmark_arrow_ipc(
         for tx in ipc_data.iter_mut() {
             if let Some(input) = tx.input.as_ref() {
                 // tx.input = Some(zstd::bulk::decompress(&input, max_input_size).unwrap());
-                tx.input = Some(lz4::block::decompress(&input, None).unwrap());
+                tx.input = Some(lz4::block::decompress(input, None).unwrap());
             }
         }
     }
@@ -203,7 +203,7 @@ fn benchmark_parquet(transactions: &[Transaction], compression_level: Option<i32
     };
 
     let start = Instant::now();
-    let parquet = to_parquet(&transactions, compression_level);
+    let parquet = to_parquet(transactions, compression_level);
 
     println!("[PARQUET{}]", compression_label,);
     println!("\tserialization:    {}ms", start.elapsed().as_millis());
@@ -225,7 +225,7 @@ fn benchmark_json(transactions: &[Transaction], compression: JsonCompression) {
     };
 
     let start = Instant::now();
-    let json_data = to_json(&transactions, compression);
+    let json_data = to_json(transactions, compression);
 
     println!("[JSON{}]", compression_label,);
     println!("\tserialization:    {}ms", start.elapsed().as_millis());
@@ -240,7 +240,7 @@ fn benchmark_json(transactions: &[Transaction], compression: JsonCompression) {
 
 fn benchmark_flatbuffers(transactions: &[Transaction]) {
     let start = Instant::now();
-    let flatbuffers_data = Transaction::to_flatbuffer(&transactions);
+    let flatbuffers_data = Transaction::to_flatbuffer(transactions);
 
     println!("[FLATBUFFERS]");
     println!("\tserialization:    {}ms", start.elapsed().as_millis());
@@ -258,7 +258,7 @@ fn benchmark_flatbuffers(transactions: &[Transaction]) {
 
 fn benchmark_flatbuffers_compressed(transactions: &[Transaction], level: i32) {
     let start = Instant::now();
-    let data = to_flatbuffers_compressed(&transactions, level);
+    let data = to_flatbuffers_compressed(transactions, level);
 
     println!("[FLATBUFFERS-CUSTOM, ZSTD_{}]", level);
     println!("\tserialization:    {}ms", start.elapsed().as_millis());
@@ -422,7 +422,7 @@ fn from_olive(data: &'static [u8]) -> Vec<Transaction> {
     let arr_data = unsafe { arrow::ffi::from_ffi(ffi_arr, &ffi_schema).unwrap() };
     let arr = make_array(arr_data);
 
-    let batch = RecordBatch::try_from(arr.as_struct()).unwrap();
+    let batch = RecordBatch::from(arr.as_struct());
 
     Transaction::from_arrow(&batch)
 }
