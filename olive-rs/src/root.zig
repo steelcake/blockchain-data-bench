@@ -17,18 +17,22 @@ const SerializeOutput = extern struct {
     ptr: [*]u8,
 };
 
-const ALLOC_SIZE = 1 << 25;
+const ALLOC_SIZE = 1 << 23;
 
 fn timer() std.time.Timer {
     return std.time.Timer.start() catch unreachable;
 }
 
 export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema) callconv(.c) SerializeOutput {
+    var t = timer();
+
     const mem = alloc_thp(ALLOC_SIZE) orelse unreachable;
     std.debug.assert(mem.len == ALLOC_SIZE);
     defer posix.munmap(mem);
     var fb_alloc = FixedBufferAllocator.init(mem);
     const alloc = fb_alloc.allocator();
+
+    std.debug.print("olive alloc in {}us\n", .{t.lap() / 1000});
 
     var ffi_array = arrow.ffi.FFI_Array{
         .array = array.*,
@@ -45,6 +49,8 @@ export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema
 
     const imported_dt = arrow.data_type.get_data_type(&imported_array, alloc) catch unreachable;
     const imported_s_dt = imported_dt.struct_;
+
+    std.debug.print("olive alloc in {}us\n", .{t.lap() / 1000});
 
     const has_minmax_index = alloc.alloc(bool, imported_s_dt.field_names.len) catch unreachable;
     for (0..has_minmax_index.len) |idx| {
@@ -75,8 +81,6 @@ export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema
             },
         },
     };
-
-    var t = timer();
 
     const chunk = olive.chunk.Chunk.from_arrow(&olive_schema, &.{imported_s_array.field_values}, alloc, alloc) catch unreachable;
 
@@ -131,14 +135,14 @@ export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema
 }
 
 export fn olivers_ffi_deserialize(data: SerializeOutput, array_out: *FFI_ArrowArray, schema_out: *FFI_ArrowSchema) callconv(.c) void {
+    var t = timer();
+
     defer posix.munmap(@alignCast(data.ptr[0..ALLOC_SIZE]));
 
     var arena = ArenaAllocator.init(std.heap.page_allocator);
     const alloc = arena.allocator();
 
     var data_end = data.len;
-
-    var t = timer();
 
     const schema_len = std.mem.readVarInt(u32, data.ptr[data_end - 4 .. data_end], .little);
     data_end -= 4;
@@ -208,10 +212,10 @@ fn alloc_thp(size: usize) ?[]align(1 << 12) u8 {
     }
     const alloc_size = align_forward(size, 1 << 21);
     const page = mmap_wrapper(alloc_size, 0) orelse return null;
-    posix.madvise(page.ptr, page.len, posix.MADV.HUGEPAGE) catch {
-        posix.munmap(page);
-        return null;
-    };
+    // posix.madvise(page.ptr, page.len, posix.MADV.HUGEPAGE) catch {
+    //     posix.munmap(page);
+    //     return null;
+    // };
     return page;
 }
 
@@ -219,7 +223,7 @@ fn mmap_wrapper(size: usize, huge_page_flag: u32) ?[]align(1 << 12) u8 {
     if (size == 0) {
         return null;
     }
-    const flags = linux.MAP{ .TYPE = .PRIVATE, .ANONYMOUS = true, .HUGETLB = huge_page_flag != 0, .POPULATE = true, .LOCKED = true };
+    const flags = linux.MAP{ .TYPE = .PRIVATE, .ANONYMOUS = true, .HUGETLB = huge_page_flag != 0, .POPULATE = true, .LOCKED = false };
     const flags_int: u32 = @bitCast(flags);
     const flags_f: linux.MAP = @bitCast(flags_int | huge_page_flag);
     const page = posix.mmap(null, size, posix.PROT.READ | posix.PROT.WRITE, flags_f, -1, 0) catch return null;
