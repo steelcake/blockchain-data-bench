@@ -84,11 +84,24 @@ export fn olivers_ffi_serialize(array: *FFI_ArrowArray, schema: *FFI_ArrowSchema
 
     const header = olive.write.write(.{
         .chunk = &chunk,
-        .compression = .{ .zstd = 1 },
+        .compression = &olive.write.ChunkCompression{
+            .dicts = &.{.no_compression},
+            .tables = &.{olive.write.TableCompression{
+                .fields = &.{
+                    .{ .flat = .lz4 },
+                    .{ .flat = .lz4 },
+                    .{ .flat = .no_compression },
+                    .{ .flat = .no_compression },
+                    .{ .flat = .{ .zstd = 1 } },
+                    .{ .flat = .no_compression },
+                    .{ .flat = .lz4 },
+                },
+            }},
+        },
         .header_alloc = alloc,
         .filter_alloc = null,
         .data_section = output[output_len..],
-        .page_size_kb = null,
+        .page_size = null,
         .scratch_alloc = alloc,
     }) catch unreachable;
     output_len += header.data_section_size;
