@@ -10,80 +10,84 @@ Example result:
 
 ```
 [Json]
-        serialization:    18593us
-        deserialization:    11783us
+        serialization:    17411us
+        deserialization:    12819us
         serialized size:  17477kB
 [Json Gzip]
-        serialization:    216783us
-        deserialization:    34257us
-        serialized size:  3711kB
+        serialization:    110043us
+        deserialization:    27351us
+        serialized size:  3439kB
 [Json ZSTD 1]
-        serialization:    32914us
-        deserialization:    17844us
+        serialization:    33264us
+        deserialization:    19385us
         serialized size:  2992kB
 [Json ZSTD 3]
-        serialization:    49133us
-        deserialization:    20319us
+        serialization:    50175us
+        deserialization:    20194us
         serialized size:  3108kB
 [Json ZSTD 9]
-        serialization:    127797us
-        deserialization:    23843us
+        serialization:    136614us
+        deserialization:    27533us
         serialized size:  3029kB
 ---
 [ArrowIPC]
-        serialization:    14093us
-        deserialization:    2742us
+        serialization:    15205us
+        deserialization:    2821us
         serialized size:  2723kB
 ---
 [Parquet]
-        serialization:    4243us
-        deserialization:    1599us
-        serialized size:  7527kB
+        serialization:    4226us
+        deserialization:    2038us
+        serialized size:  7523kB
 [Parquet ZSTD 1]
-        serialization:    11102us
-        deserialization:    3351us
-        serialized size:  2770kB
+        serialization:    11637us
+        deserialization:    3695us
+        serialized size:  2767kB
 [Parquet ZSTD 3]
-        serialization:    14971us
-        deserialization:    3203us
-        serialized size:  2653kB
+        serialization:    15625us                                                                                                                        deserialization:    3513us
+        serialized size:  2650kB
 [Parquet ZSTD 9]
-        serialization:    45356us
-        deserialization:    3163us
-        serialized size:  2600kB
+        serialization:    46165us
+        deserialization:    3089us
+        serialized size:  2596kB
 ---
 [Flatbuffers]
-        serialization:    4961us
-        deserialization:    4309us
+        serialization:    5011us
+        deserialization:    4001us
         serialized size:  8847kB
 [Flatbuffers ZSTD 1]
-        serialization:    15218us
-        deserialization:    7714us
+        serialization:    15890us
+        deserialization:    7347us
         serialized size:  2998kB
 [Flatbuffers ZSTD 3]
-        serialization:    22263us
-        deserialization:    7388us
+        serialization:    22362us
+        deserialization:    7603us
         serialized size:  2735kB
 [Flatbuffers ZSTD 9]
-        serialization:    55344us
-        deserialization:    7460us
+        serialization:    57361us
+        deserialization:    7280us
         serialized size:  2586kB
 ---
-olive alloc in 219us
-olive alloc in 251us
-olive from_arrow in 1633us
-olive write in 6113us
-olive header write in 4us
+olive alloc in 263us
+olive alloc in 290us
+olive from_arrow in 2082us
+olive write in 6257us
+olive header write in 6us
 olive schema write in 2us
-olive schema read in 7us
+olive schema read in 9us
 olive header read in 3us
-olive read in 2058us
-olive to_arrow in 193us
-olive read finish in 6us
+olive read in 2199us
+olive to_arrow in 190us
+olive read finish in 7us
 [OLIVE]
-        serialization:    8267us
-        deserialization:    2304us
+        serialization:    8948us
+        deserialization:    2452us
         serialized size:  2871kB
+---
+[VORTEX]
+        serialization:    12541us
+        deserialization:    4380us
+        serialized size:  2762kB
 
 ====================================================
 ```
