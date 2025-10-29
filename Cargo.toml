@@ -7,26 +7,20 @@ edition = "2024"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-arrow = "54"
-arrow_convert = "0.8.1"
-cherry-core = { git = "https://github.com/steelcake/cherry-core" }
+arrow = "56"
+arrow_convert = "0.10"
+cherry-core = "0.7"
 faster-hex = "0.10"
 futures-lite = "2"
 flate2 = "1"
-arrow-ipc = { version = "54", features = ["zstd", "lz4"] }
+arrow-ipc = { version = "56", features = ["zstd", "lz4"] }
 simd-json = "*"
-tikv-jemallocator = "0.5"
-parquet = "54"
+tikv-jemallocator = "0.6"
+parquet = "56"
 bytes = "1"
 itertools = "*"
 zstd = "0.13"
 flatbuffers = "25.2.10"
 lz4 = "1"
 mimalloc = "0.1.46"
-
-[build-dependencies]
-which = "4.4"
-
-[profile.release]
-debug = true
-strip = false
+vortex = "0.54"

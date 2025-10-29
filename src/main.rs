@@ -6,6 +6,11 @@ use arrow_convert::{ArrowDeserialize, ArrowField, ArrowSerialize};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use vortex::Array as VortexArray;
+use vortex::arrow::{FromArrowArray, IntoArrowArray};
+use vortex::compressor::CompactCompressor;
+use vortex::file::{VortexOpenOptions, VortexWriteOptions, WriteStrategyBuilder};
+use vortex::io::runtime::single::SingleThreadRuntime;
 
 use cherry_core::ingest;
 use flatbuffers::FlatBufferBuilder;
@@ -65,6 +70,10 @@ async fn main() {
 
     // Benchmark olive
     benchmark_olive(&transactions).print("OLIVE");
+    println!("---");
+
+    // Benchmark vortex
+    benchmark_vortex(&transactions).await.print("VORTEX");
 
     println!("\n====================================================\n");
 }
@@ -136,6 +145,25 @@ fn benchmark_olive(transactions: &RecordBatch) -> BenchResult {
     for (exp, g) in expected.iter().zip(got.iter()) {
         assert_eq!(exp, g);
     }
+
+    BenchResult {
+        serialization,
+        deserialization,
+        size,
+    }
+}
+
+async fn benchmark_vortex(transactions: &RecordBatch) -> BenchResult {
+    let start = Instant::now();
+    let vrtx = to_vortex(transactions);
+    let serialization = start.elapsed();
+    let size = vrtx.len();
+
+    let start = Instant::now();
+    let vrtx_data = from_vortex(vrtx);
+    let deserialization = start.elapsed();
+
+    assert_eq!(transactions, &vrtx_data);
 
     BenchResult {
         serialization,
@@ -416,6 +444,66 @@ fn from_arrow_ipc(data: &[u8]) -> RecordBatch {
     batches.pop().unwrap()
 }
 
+fn to_vortex(batch: &RecordBatch) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let arr = Arc::<dyn VortexArray>::from_arrow(batch, false);
+    let summary = VortexWriteOptions::default()
+        .with_strategy(
+            WriteStrategyBuilder::new()
+                .with_compressor(CompactCompressor::default().with_zstd_level(1))
+                .build(),
+        )
+        .with_blocking(SingleThreadRuntime::default())
+        .write(&mut buf, arr.to_array_iterator())
+        .unwrap();
+
+    buf.truncate(usize::try_from(summary.size()).unwrap());
+
+    buf
+}
+
+fn from_vortex(data: Vec<u8>) -> RecordBatch {
+    let res: Vec<Arc<dyn VortexArray>> = VortexOpenOptions::default()
+        .open_buffer(data)
+        .unwrap()
+        .scan()
+        .unwrap()
+        .into_array_iter(&SingleThreadRuntime::default())
+        .unwrap()
+        .map(|x| x.unwrap())
+        .collect();
+
+    let schema = make_schema();
+    let dt = DataType::Struct(schema.fields().clone());
+
+    let res = res
+        .into_iter()
+        .map(|x| {
+            RecordBatch::from(
+                x.into_arrow(&dt)
+                    .unwrap()
+                    .as_any()
+                    .downcast_ref::<StructArray>()
+                    .unwrap(),
+            )
+        })
+        .collect::<Vec<RecordBatch>>();
+
+    arrow::compute::concat_batches(res[0].schema_ref(), &res).unwrap()
+}
+
+fn make_schema() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::new("block_hash", DataType::Binary, true),
+        Field::new("block_number", DataType::UInt64, true),
+        Field::new("from", DataType::Binary, true),
+        Field::new("hash", DataType::Binary, true),
+        Field::new("input", DataType::Binary, true),
+        Field::new("to", DataType::Binary, true),
+        Field::new("transaction_index", DataType::UInt64, true),
+    ]))
+}
+
 #[derive(
     Debug, Clone, Serialize, Deserialize, ArrowField, ArrowSerialize, ArrowDeserialize, PartialEq,
 )]
@@ -534,15 +622,7 @@ impl Transaction {
         }
 
         RecordBatch::try_new(
-            Arc::new(Schema::new(vec![
-                Field::new("block_hash", DataType::Binary, true),
-                Field::new("block_number", DataType::UInt64, true),
-                Field::new("from", DataType::Binary, true),
-                Field::new("hash", DataType::Binary, true),
-                Field::new("input", DataType::Binary, true),
-                Field::new("to", DataType::Binary, true),
-                Field::new("transaction_index", DataType::UInt64, true),
-            ])),
+            make_schema(),
             vec![
                 Arc::new(block_hash.finish()),
                 Arc::new(block_number.finish()),
