@@ -5,8 +5,6 @@ edition = "2024"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 arrow = "56"
 arrow_convert = "0.10"
 cherry-core = "0.7"
@@ -14,13 +12,11 @@ faster-hex = "0.10"
 futures-lite = "2"
 flate2 = "1"
 arrow-ipc = { version = "56", features = ["zstd", "lz4"] }
-simd-json = "*"
 tikv-jemallocator = "0.6"
 parquet = "56"
 bytes = "1"
 itertools = "*"
 zstd = "0.13"
-flatbuffers = "25.2.10"
 lz4 = "1"
 mimalloc = "0.1.46"
 vortex = "0.54"

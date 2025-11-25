@@ -1,5 +1,5 @@
 build_zig:
-	cd olive-rs && zig build install -Doptimize=ReleaseSafe
+	cd olive-rs && zig build install -Doptimize=ReleaseFast
 build_zig_debug:
 	cd olive-rs && zig build install 
 run: build_zig
