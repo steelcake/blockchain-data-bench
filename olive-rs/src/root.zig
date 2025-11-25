@@ -30,6 +30,7 @@ const Context = extern struct {
 };
 
 export fn olivers_init_ctx() callconv(.c) Context {
+    std.debug.print("olive init_ctx\n", .{});
     return .{
         .serialize_mem = (alloc_thp(ALLOC_SIZE) orelse unreach()).ptr,
         .deserialize_mem = (alloc_thp(ALLOC_SIZE) orelse unreach()).ptr,
@@ -57,6 +58,8 @@ export fn olivers_ffi_serialize(
     schemas: [*]const FFI_ArrowSchema,
     n_tables: usize,
 ) callconv(.c) SerializeOutput {
+    std.debug.print("olive serialize\n", .{});
+
     var t = timer();
 
     var fb_alloc = std.heap.page_allocator.create(FixedBufferAllocator) catch unreach();
@@ -77,9 +80,9 @@ export fn olivers_ffi_serialize(
             .schema = schemas[idx],
         };
     }
-    defer for (ffi_arrays) |*a| {
-        a.release();
-    };
+    // defer for (ffi_arrays) |*a| {
+    //     a.release();
+    // };
 
     const field_names = alloc.alloc([]const [:0]const u8, n_tables) catch unreach();
     const tables = alloc.alloc([]const arrow.array.Array, n_tables) catch unreach();
@@ -153,7 +156,7 @@ export fn olivers_ffi_serialize(
 
 export fn olivers_ffi_deserialize(
     ctx: *const Context,
-    data: SerializeOutput,
+    data_raw: SerializeOutput,
     table_names_out: *[*]const [*:0]const u8,
     arrays_out: *[*]const FFI_ArrowArray,
     schemas_out: *[*]const FFI_ArrowSchema,
@@ -166,19 +169,26 @@ export fn olivers_ffi_deserialize(
     var arena = ArenaAllocator.init(fb_alloc.allocator());
     const alloc = arena.allocator();
 
+    const data = data_raw.ptr[0..data_raw.len];
+
+    var x: u8 = 0;
+    for (data) |xq| {
+        x +%= xq;
+    }
+
     var data_end = data.len;
 
-    const schema_len = std.mem.readVarInt(u32, data.ptr[data_end - 4 .. data_end], .little);
+    const schema_len = std.mem.readVarInt(u32, data[data_end - 4 .. data_end], .little);
     data_end -= 4;
-    const schema_bytes = data.ptr[data_end - schema_len .. data_end];
+    const schema_bytes = data[data_end - schema_len .. data_end];
     data_end -= @intCast(schema_bytes.len);
     const schema = borsh.deserialize(olive.schema.Schema, schema_bytes, alloc, 40) catch unreach();
 
     std.debug.print("olive schema read in {}us\n", .{t.lap() / 1000});
 
-    const header_len = std.mem.readVarInt(u32, data.ptr[data_end - 4 .. data_end], .little);
+    const header_len = std.mem.readVarInt(u32, data[data_end - 4 .. data_end], .little);
     data_end -= 4;
-    const header_bytes = data.ptr[data_end - header_len .. data_end];
+    const header_bytes = data[data_end - header_len .. data_end];
     data_end -= @intCast(header_bytes.len);
     const header = borsh.deserialize(olive.header.Header, header_bytes, alloc, 40) catch unreach();
 
@@ -187,7 +197,7 @@ export fn olivers_ffi_deserialize(
     const chunk = olive.read.read(.{
         .schema = &schema,
         .scratch_alloc = alloc,
-        .data_section = data.ptr[0..data_end],
+        .data_section = data[0..data_end],
         .alloc = alloc,
         .header = &header,
     }) catch unreach();

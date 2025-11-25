@@ -13,7 +13,7 @@ use vortex::compressor::CompactCompressor;
 use vortex::file::{VortexOpenOptions, VortexWriteOptions, WriteStrategyBuilder};
 use vortex::io::runtime::single::SingleThreadRuntime;
 
-use cherry_core::ingest;
+use cherry_core::ingest::{self, svm};
 use ingest::evm;
 
 use futures_lite::StreamExt;
@@ -24,51 +24,107 @@ static GLOBAL: Jemalloc = Jemalloc;
 
 #[tokio::main]
 async fn main() {
+    env_logger::init();
+
     let eth_data = fetch_eth_data().await;
-    let eth_schema = eth_data
+    benchmark_dataset("ETH", &eth_data);
+
+    let svm_data = fetch_svm_data().await;
+    benchmark_dataset("SOLANA", &svm_data);
+}
+
+fn benchmark_dataset(ds_name: &str, data: &BTreeMap<String, RecordBatch>) {
+    println!(
+        "######################### Benchmarking Dataset {} ###############",
+        ds_name
+    );
+    let schema = data
         .iter()
         .map(|(name, table)| (name.clone(), table.schema()))
         .collect::<BTreeMap<String, Arc<Schema>>>();
 
-    bench_one::<ArrowIPC>(&ArrowIPC, &eth_data).print();
+    bench_one::<ArrowIPC>(&ArrowIPC, &data).print();
     println!("---");
 
-    bench_one::<Parquet>(&Parquet { zstd_level: None }, &eth_data).print();
+    bench_one::<Parquet>(&Parquet { zstd_level: None }, &data).print();
     bench_one::<Parquet>(
         &Parquet {
             zstd_level: Some(1),
         },
-        &eth_data,
+        &data,
     )
     .print();
     bench_one::<Parquet>(
         &Parquet {
             zstd_level: Some(3),
         },
-        &eth_data,
+        &data,
     )
     .print();
     println!("---");
 
     bench_one::<Vortex>(
         &Vortex {
-            schema: eth_schema.clone(),
+            schema: schema.clone(),
         },
-        &eth_data,
+        &data,
     )
     .print();
     println!("---");
 
-    bench_one::<Olive>(
-        &Olive {
-            ctx: OliveContext::new(),
-        },
-        &eth_data,
-    )
-    .print();
+    let ctx = OliveContext::new();
+    let olive = Olive { ctx };
+    bench_one::<Olive>(&olive, &data).print();
     println!("---");
-
     println!("\n====================================================\n");
+}
+
+async fn fetch_svm_data() -> BTreeMap<String, RecordBatch> {
+    let query = ingest::Query::Svm(svm::Query {
+        from_block: 380_123_123,
+        to_block: Some(380_123_173),
+        include_all_blocks: true,
+        rewards: vec![svm::RewardRequest::default()],
+        token_balances: vec![svm::TokenBalanceRequest::default()],
+        balances: vec![svm::BalanceRequest::default()],
+        logs: vec![svm::LogRequest::default()],
+        transactions: vec![svm::TransactionRequest::default()],
+        instructions: vec![svm::InstructionRequest::default()],
+        fields: svm::Fields::all(),
+        ..Default::default()
+    });
+
+    let mut conf = ingest::ProviderConfig::new(ingest::ProviderKind::Sqd);
+    conf.url = Some("https://portal.sqd.dev/datasets/solana-mainnet".to_owned());
+
+    let mut stream = ingest::start_stream(conf, query).await.unwrap();
+
+    let mut data = BTreeMap::<String, Vec<RecordBatch>>::new();
+
+    while let Some(res) = stream.next().await {
+        let res = res.unwrap();
+
+        for table_name in res.keys() {
+            if !data.contains_key(table_name) {
+                data.insert(table_name.clone(), Vec::new());
+            }
+        }
+
+        for (table_name, table) in res.into_iter() {
+            data.get_mut(&table_name).unwrap().push(table);
+        }
+    }
+
+    let mut out = BTreeMap::<String, RecordBatch>::new();
+
+    for (table_name, chunks) in data.into_iter() {
+        out.insert(
+            table_name,
+            arrow::compute::concat_batches(&chunks[0].schema(), &chunks).unwrap(),
+        );
+    }
+
+    out
 }
 
 async fn fetch_eth_data() -> BTreeMap<String, RecordBatch> {
@@ -465,9 +521,10 @@ fn from_olive(ctx: &OliveContext, data: &'static [u8]) -> BTreeMap<String, Recor
 
     unsafe {
         for idx in 0..n_tables {
-            let arr = Box::from_raw(arrays_out.add(idx) as *mut FFI_ArrowArray);
-            let arr_data = arrow::ffi::from_ffi(*arr, &*schemas_out.add(idx)).unwrap();
-            let arr = make_array(arr_data);
+            let arr = FFI_ArrowArray::from_raw(arrays_out.add(idx) as *mut FFI_ArrowArray);
+            let arr_data = arrow::ffi::from_ffi(arr, &*schemas_out.add(idx)).unwrap();
+            let arr = make_array(arr_data.clone());
+            std::mem::forget(arr_data);
 
             let name = CStr::from_ptr(*table_names_out.add(idx) as *const i8)
                 .to_str()
