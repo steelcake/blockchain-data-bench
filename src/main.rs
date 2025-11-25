@@ -1,17 +1,16 @@
-use arrow::array::{Array, AsArray, StructArray, make_array, make_comparator};
-use arrow::datatypes::{DataType, Schema};
+use arrow::array::{
+    Array, ArrayRef, AsArray, FixedSizeBinaryBuilder, FixedSizeListArray, LargeListArray,
+    ListArray, StructArray, make_array, make_comparator,
+};
+use arrow::datatypes::{DataType, Field, Fields, Schema};
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::record_batch::RecordBatch;
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::ffi::{CStr, CString};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use vortex::Array as VortexArray;
-use vortex::arrow::{FromArrowArray, IntoArrowArray};
-use vortex::compressor::CompactCompressor;
-use vortex::file::{VortexOpenOptions, VortexWriteOptions, WriteStrategyBuilder};
-use vortex::io::runtime::single::SingleThreadRuntime;
+// use vortex::Array as VortexArray;
 
 use cherry_core::ingest::{self, svm};
 use ingest::evm;
@@ -29,8 +28,14 @@ async fn main() {
     let eth_data = fetch_eth_data().await;
     benchmark_dataset("ETH", &eth_data);
 
+    let eth_fixed_data = process_map(eth_data);
+    benchmark_dataset("ETH_FIXED", &eth_fixed_data);
+
     let svm_data = fetch_svm_data().await;
     benchmark_dataset("SOLANA", &svm_data);
+
+    let svm_fixed_data = process_map(svm_data);
+    benchmark_dataset("SOLANA_FIXED", &svm_fixed_data);
 }
 
 fn benchmark_dataset(ds_name: &str, data: &BTreeMap<String, RecordBatch>) {
@@ -38,43 +43,43 @@ fn benchmark_dataset(ds_name: &str, data: &BTreeMap<String, RecordBatch>) {
         "######################### Benchmarking Dataset {} ###############",
         ds_name
     );
-    let schema = data
-        .iter()
-        .map(|(name, table)| (name.clone(), table.schema()))
-        .collect::<BTreeMap<String, Arc<Schema>>>();
+    // let schema = data
+    //     .iter()
+    //     .map(|(name, table)| (name.clone(), table.schema()))
+    //     .collect::<BTreeMap<String, Arc<Schema>>>();
 
-    bench_one::<ArrowIPC>(&ArrowIPC, &data).print();
+    bench_one::<ArrowIPC>(&ArrowIPC, data).print();
     println!("---");
 
-    bench_one::<Parquet>(&Parquet { zstd_level: None }, &data).print();
+    bench_one::<Parquet>(&Parquet { zstd_level: None }, data).print();
     bench_one::<Parquet>(
         &Parquet {
             zstd_level: Some(1),
         },
-        &data,
+        data,
     )
     .print();
     bench_one::<Parquet>(
         &Parquet {
             zstd_level: Some(3),
         },
-        &data,
+        data,
     )
     .print();
     println!("---");
 
-    bench_one::<Vortex>(
-        &Vortex {
-            schema: schema.clone(),
-        },
-        &data,
-    )
-    .print();
-    println!("---");
+    // bench_one::<Vortex>(
+    //     &Vortex {
+    //         schema: schema.clone(),
+    //     },
+    //     &data,
+    // )
+    // .print();
+    // println!("---");
 
     let ctx = OliveContext::new();
     let olive = Olive { ctx };
-    bench_one::<Olive>(&olive, &data).print();
+    bench_one::<Olive>(&olive, data).print();
     println!("---");
     println!("\n====================================================\n");
 }
@@ -82,7 +87,7 @@ fn benchmark_dataset(ds_name: &str, data: &BTreeMap<String, RecordBatch>) {
 async fn fetch_svm_data() -> BTreeMap<String, RecordBatch> {
     let query = ingest::Query::Svm(svm::Query {
         from_block: 380_123_123,
-        to_block: Some(380_123_173),
+        to_block: Some(380_123_133),
         include_all_blocks: true,
         rewards: vec![svm::RewardRequest::default()],
         token_balances: vec![svm::TokenBalanceRequest::default()],
@@ -91,7 +96,6 @@ async fn fetch_svm_data() -> BTreeMap<String, RecordBatch> {
         transactions: vec![svm::TransactionRequest::default()],
         instructions: vec![svm::InstructionRequest::default()],
         fields: svm::Fields::all(),
-        ..Default::default()
     });
 
     let mut conf = ingest::ProviderConfig::new(ingest::ProviderKind::Sqd);
@@ -136,7 +140,6 @@ async fn fetch_eth_data() -> BTreeMap<String, RecordBatch> {
         logs: vec![evm::LogRequest::default()],
         traces: vec![evm::TraceRequest::default()],
         fields: evm::Fields::all(),
-        ..Default::default()
     });
 
     let mut conf = ingest::ProviderConfig::new(ingest::ProviderKind::Sqd);
@@ -208,7 +211,7 @@ impl FileFormat for Olive {
     type Serialized = &'static [u8];
 
     fn serialize(&self, data: &BTreeMap<String, RecordBatch>) -> Self::Serialized {
-        to_olive(&self.ctx, &data)
+        to_olive(&self.ctx, data)
     }
 
     fn deserialize(&self, data: Self::Serialized) -> BTreeMap<String, RecordBatch> {
@@ -256,36 +259,36 @@ impl FileFormat for Parquet {
     }
 }
 
-struct Vortex {
-    schema: BTreeMap<String, Arc<Schema>>,
-}
+// struct Vortex {
+//     schema: BTreeMap<String, Arc<Schema>>,
+// }
 
-impl FileFormat for Vortex {
-    type Serialized = BTreeMap<String, Vec<u8>>;
+// impl FileFormat for Vortex {
+//     type Serialized = BTreeMap<String, Vec<u8>>;
 
-    fn serialize(&self, data: &BTreeMap<String, RecordBatch>) -> Self::Serialized {
-        data.iter()
-            .map(|(name, table)| (name.clone(), to_vortex(table)))
-            .collect::<BTreeMap<String, Vec<u8>>>()
-    }
+//     fn serialize(&self, data: &BTreeMap<String, RecordBatch>) -> Self::Serialized {
+//         data.iter()
+//             .map(|(name, table)| (name.clone(), to_vortex(table)))
+//             .collect::<BTreeMap<String, Vec<u8>>>()
+//     }
 
-    fn deserialize(&self, data: Self::Serialized) -> BTreeMap<String, RecordBatch> {
-        data.into_iter()
-            .map(|(name, table)| {
-                let schema = self.schema.get(&name).unwrap();
-                (name, from_vortex(schema, table))
-            })
-            .collect()
-    }
+//     fn deserialize(&self, data: Self::Serialized) -> BTreeMap<String, RecordBatch> {
+//         data.into_iter()
+//             .map(|(name, table)| {
+//                 let schema = self.schema.get(&name).unwrap();
+//                 (name, from_vortex(schema, table))
+//             })
+//             .collect()
+//     }
 
-    fn total_len(data: &Self::Serialized) -> usize {
-        data.values().map(|v| v.len()).sum()
-    }
+//     fn total_len(data: &Self::Serialized) -> usize {
+//         data.values().map(|v| v.len()).sum()
+//     }
 
-    fn name(&self) -> String {
-        "Vortex".to_owned()
-    }
-}
+//     fn name(&self) -> String {
+//         "Vortex".to_owned()
+//     }
+// }
 
 struct ArrowIPC;
 
@@ -530,7 +533,7 @@ fn from_olive(ctx: &OliveContext, data: &'static [u8]) -> BTreeMap<String, Recor
                 .to_str()
                 .unwrap()
                 .to_owned();
-            let batch = RecordBatch::try_from(arr.as_struct()).unwrap();
+            let batch = RecordBatch::from(arr.as_struct());
 
             out.insert(name, batch);
         }
@@ -565,49 +568,256 @@ fn from_arrow_ipc(data: &[u8]) -> RecordBatch {
     batches.pop().unwrap()
 }
 
-fn to_vortex(batch: &RecordBatch) -> Vec<u8> {
-    let mut buf = Vec::new();
-    let arr = Arc::<dyn VortexArray>::from_arrow(batch, false);
-    let summary = VortexWriteOptions::default()
-        .with_strategy(
-            WriteStrategyBuilder::new()
-                .with_compressor(CompactCompressor::default().with_zstd_level(1))
-                .build(),
-        )
-        .with_blocking(SingleThreadRuntime::default())
-        .write(&mut buf, arr.to_array_iterator())
-        .unwrap();
+// fn to_vortex(batch: &RecordBatch) -> Vec<u8> {
+//     let mut buf = Vec::new();
+//     let arr = Arc::<dyn VortexArray>::from_arrow(batch, false);
+//     let summary = VortexWriteOptions::default()
+//         .with_strategy(
+//             WriteStrategyBuilder::new()
+//                 .with_compressor(CompactCompressor::default().with_zstd_level(1))
+//                 .build(),
+//         )
+//         .with_blocking(SingleThreadRuntime::default())
+//         .write(&mut buf, arr.to_array_iterator())
+//         .unwrap();
 
-    buf.truncate(usize::try_from(summary.size()).unwrap());
+//     buf.truncate(usize::try_from(summary.size()).unwrap());
 
-    buf
+//     buf
+// }
+
+// fn from_vortex(schema: &Schema, data: Vec<u8>) -> RecordBatch {
+//     let res: Vec<Arc<dyn VortexArray>> = VortexOpenOptions::default()
+//         .open_buffer(data)
+//         .unwrap()
+//         .scan()
+//         .unwrap()
+//         .into_array_iter(&SingleThreadRuntime::default())
+//         .unwrap()
+//         .map(|x| x.unwrap())
+//         .collect();
+
+//     let dt = DataType::Struct(schema.fields().clone());
+
+//     let res = res
+//         .into_iter()
+//         .map(|x| {
+//             RecordBatch::from(
+//                 x.into_arrow(&dt)
+//                     .unwrap()
+//                     .as_any()
+//                     .downcast_ref::<StructArray>()
+//                     .unwrap(),
+//             )
+//         })
+//         .collect::<Vec<RecordBatch>>();
+
+//     arrow::compute::concat_batches(res[0].schema_ref(), &res).unwrap()
+// }
+
+pub fn process_map(input: BTreeMap<String, RecordBatch>) -> BTreeMap<String, RecordBatch> {
+    input
+        .into_iter()
+        .map(|(k, rb)| (k, process_record_batch(rb)))
+        .collect()
 }
 
-fn from_vortex(schema: &Schema, data: Vec<u8>) -> RecordBatch {
-    let res: Vec<Arc<dyn VortexArray>> = VortexOpenOptions::default()
-        .open_buffer(data)
-        .unwrap()
-        .scan()
-        .unwrap()
-        .into_array_iter(&SingleThreadRuntime::default())
-        .unwrap()
-        .map(|x| x.unwrap())
+fn process_record_batch(rb: RecordBatch) -> RecordBatch {
+    let schema = rb.schema();
+    let fields = schema.fields();
+    let new_arrays: Vec<ArrayRef> = rb
+        .columns()
+        .iter()
+        .zip(fields.iter())
+        .map(|(arr, _)| process_array(arr.clone()))
         .collect();
 
-    let dt = DataType::Struct(schema.fields().clone());
-
-    let res = res
-        .into_iter()
-        .map(|x| {
-            RecordBatch::from(
-                x.into_arrow(&dt)
-                    .unwrap()
-                    .as_any()
-                    .downcast_ref::<StructArray>()
-                    .unwrap(),
-            )
+    let new_fields: Vec<Arc<Field>> = fields
+        .iter()
+        .zip(new_arrays.iter())
+        .map(|(f, a)| {
+            if a.data_type() == f.data_type() {
+                f.clone()
+            } else {
+                Arc::new(Field::new(f.name(), a.data_type().clone(), f.is_nullable()))
+            }
         })
-        .collect::<Vec<RecordBatch>>();
+        .collect();
 
-    arrow::compute::concat_batches(res[0].schema_ref(), &res).unwrap()
+    let new_schema = Arc::new(Schema::new_with_metadata(
+        new_fields,
+        schema.metadata().clone(),
+    ));
+    RecordBatch::try_new(new_schema, new_arrays).unwrap()
+}
+
+fn process_array(arr: ArrayRef) -> ArrayRef {
+    match arr.data_type() {
+        DataType::Binary => {
+            if let Some(fixed_size) = check_binary_lengths(&*arr) {
+                convert_to_fixed_size_binary(&*arr, fixed_size)
+            } else {
+                arr
+            }
+        }
+        DataType::LargeBinary => {
+            if let Some(fixed_size) = check_large_binary_lengths(&*arr) {
+                convert_to_fixed_size_binary_large(&*arr, fixed_size)
+            } else {
+                arr
+            }
+        }
+        DataType::Struct(fields) => {
+            let struct_arr = arr.as_any().downcast_ref::<StructArray>().unwrap();
+            let new_values: Vec<ArrayRef> = struct_arr
+                .columns()
+                .iter()
+                .map(|a| process_array(a.clone()))
+                .collect();
+            let new_fields: Fields = fields
+                .iter()
+                .zip(new_values.iter())
+                .map(|(f, a)| {
+                    if a.data_type() == f.data_type() {
+                        f.clone()
+                    } else {
+                        Arc::new(Field::new(f.name(), a.data_type().clone(), f.is_nullable()))
+                    }
+                })
+                .collect();
+            Arc::new(
+                StructArray::try_new(new_fields, new_values, struct_arr.nulls().cloned()).unwrap(),
+            )
+        }
+        DataType::List(field) => {
+            let list_arr = arr.as_any().downcast_ref::<ListArray>().unwrap();
+            let new_values = process_array(list_arr.values().clone());
+            let new_field = if new_values.data_type() == field.data_type() {
+                field.clone()
+            } else {
+                Arc::new(Field::new_list_field(
+                    new_values.data_type().clone(),
+                    field.is_nullable(),
+                ))
+            };
+            Arc::new(
+                ListArray::try_new(
+                    new_field,
+                    list_arr.offsets().clone(),
+                    new_values,
+                    list_arr.nulls().cloned(),
+                )
+                .unwrap(),
+            )
+        }
+        DataType::LargeList(field) => {
+            let list_arr = arr.as_any().downcast_ref::<LargeListArray>().unwrap();
+            let new_values = process_array(list_arr.values().clone());
+            let new_field = if new_values.data_type() == field.data_type() {
+                field.clone()
+            } else {
+                Arc::new(Field::new_list_field(
+                    new_values.data_type().clone(),
+                    field.is_nullable(),
+                ))
+            };
+            Arc::new(
+                LargeListArray::try_new(
+                    new_field,
+                    list_arr.offsets().clone(),
+                    new_values,
+                    list_arr.nulls().cloned(),
+                )
+                .unwrap(),
+            )
+        }
+        DataType::FixedSizeList(field, size) => {
+            let list_arr = arr.as_any().downcast_ref::<FixedSizeListArray>().unwrap();
+            let new_values = process_array(list_arr.values().clone());
+            let new_field = if new_values.data_type() == field.data_type() {
+                field.clone()
+            } else {
+                Arc::new(Field::new_list_field(
+                    new_values.data_type().clone(),
+                    field.is_nullable(),
+                ))
+            };
+            Arc::new(
+                FixedSizeListArray::try_new(
+                    new_field,
+                    *size,
+                    new_values,
+                    list_arr.nulls().cloned(),
+                )
+                .unwrap(),
+            )
+        }
+        _ => arr,
+    }
+}
+
+fn check_binary_lengths(arr: &dyn Array) -> Option<i32> {
+    let bin_arr = arr.as_binary::<i32>();
+    let mut len_set: HashSet<i32> = HashSet::new();
+    for i in 0..bin_arr.len() {
+        if bin_arr.is_valid(i) {
+            let l = bin_arr.value_length(i);
+            len_set.insert(l);
+            if len_set.len() > 1 {
+                return None;
+            }
+        }
+    }
+    if len_set.is_empty() {
+        return None;
+    }
+    let l = *len_set.iter().next().unwrap();
+    if l == 20 || l == 32 { Some(l) } else { None }
+}
+
+fn check_large_binary_lengths(arr: &dyn Array) -> Option<i32> {
+    let bin_arr = arr.as_binary::<i64>();
+    let mut len_set: HashSet<i32> = HashSet::new();
+    for i in 0..bin_arr.len() {
+        if bin_arr.is_valid(i) {
+            let l = bin_arr.value_length(i) as i32; // Assume lengths fit i32
+            len_set.insert(l);
+            if len_set.len() > 1 {
+                return None;
+            }
+        }
+    }
+    if len_set.is_empty() {
+        return None;
+    }
+    let l = *len_set.iter().next().unwrap();
+    if l == 20 || l == 32 { Some(l) } else { None }
+}
+
+fn convert_to_fixed_size_binary(arr: &dyn Array, size: i32) -> ArrayRef {
+    let bin_arr = arr.as_binary::<i32>();
+    let mut builder = FixedSizeBinaryBuilder::new(size);
+    for i in 0..bin_arr.len() {
+        if bin_arr.is_null(i) {
+            builder.append_null();
+        } else {
+            let val = bin_arr.value(i);
+            builder.append_value(val).unwrap();
+        }
+    }
+    Arc::new(builder.finish())
+}
+
+fn convert_to_fixed_size_binary_large(arr: &dyn Array, size: i32) -> ArrayRef {
+    let bin_arr = arr.as_binary::<i64>();
+    let mut builder = FixedSizeBinaryBuilder::new(size);
+    for i in 0..bin_arr.len() {
+        if bin_arr.is_null(i) {
+            builder.append_null();
+        } else {
+            let val = bin_arr.value(i);
+            builder.append_value(val).unwrap();
+        }
+    }
+    Arc::new(builder.finish())
 }
